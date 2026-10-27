@@ -683,10 +683,13 @@ buttonText:"SCR"
 				-- Cancel while reading changes nothing; cancel while writing is rolled back with undo.
 				samples = for i = 1 to nodes.count collect #()
 				cancelled = false
-				progressStart "Baking car rig"
+				-- Esc cancels like the Cancel button. Max's own Esc interrupt is off meanwhile: it would stop the
+				-- script mid-bake and skip the clean-up below, leaving half-written keys.
+				escapeEnable = false
+				progressStart "Baking car rig (Esc or Cancel to stop)"
 				for k = 1 to frames.count while not cancelled do (
 					for i = 1 to nodes.count do append samples[i] (at time frames[k] nodes[i].transform)
-					if not (progressUpdate (50.0 * k / frames.count)) do cancelled = true
+					if not (progressUpdate (50.0 * k / frames.count)) or keyboard.escPressed do cancelled = true
 				)
 				if not cancelled do (
 					undo "Bake car rig" on (
@@ -694,13 +697,14 @@ buttonText:"SCR"
 						with animate on (
 							for k = 1 to frames.count while not cancelled do (
 								for i = 1 to nodes.count do at time frames[k] nodes[i].transform = samples[i][k]
-								if not (progressUpdate (50.0 + 50.0 * k / frames.count)) do cancelled = true
+								if not (progressUpdate (50.0 + 50.0 * k / frames.count)) or keyboard.escPressed do cancelled = true
 							)
 						)
 					)
 					if cancelled do max undo
 				)
 				progressEnd()
+				escapeEnable = true
 				if cancelled then logLine ("Bake of " + root.name + " cancelled; nothing changed")
 				else (
 					setUserProp root "MaxCarRig_baked" true
