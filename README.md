@@ -16,6 +16,8 @@ That's it. The car now follows the spline from start to end over the active time
 
 | Capability | What you get |
 | --- | --- |
+| Auto detect by name | Finds FRONT_LEFT, FRONT_RIGHT, BACK_LEFT, BACK_RIGHT (or REAR_), BODY, CAR PATH and CAR SURFACE in the scene, and makes a BOTTOM helper. Spaces, dashes and case do not matter. |
+| Bake to keys | Records the rig as plain keys on every frame for lag-free playback. The Car Rig modifier stops driving the car afterwards; build again to change it. |
 | Spline follow | The car rides the spline at constant speed. Progress % on the rig's Car Rig modifier is keyed 0 to 100 over the timeline; re-key it to change timing. |
 | Simple mode | The car just rides the spline, pitched along it, at the BOTTOM height. No ground, steering or bank. |
 | Body mode | Rays go down from the BOTTOM helper; the car sits on the hit point, tilted to the surface. |
@@ -28,7 +30,7 @@ That's it. The car now follows the spline from start to end over the active time
 | Include or exclude ground | Include: only listed objects are ground. Exclude: every visible geometry object except the list and the car (a snapshot taken at Build). |
 | Auto size | Rig helpers are sized from the car and wheel size. |
 | No plugin needed to open scenes | The rig is a Transform Script controller saved in the .max file. |
-| Car Rig modifier | The green `<car>_CarRig` rectangle round the car carries a Car Rig modifier with Progress %, Look ahead, Max steer, Bank, Ray start height and Reverse along spline (drive from the last vertex to the first, nose first). All live. |
+| Car Rig modifier | The green `<car>_CarRig` rectangle round the car carries a Car Rig modifier with Progress %, Look ahead (8 m by default), Max steer, Bank, Ray start height and Reverse along spline (drive from the last vertex to the first, nose first). All live. |
 | Remove rig | Unlinks the car and wheels (back to their old parents), deletes the rig helpers. Undo works. |
 
 ## Settings

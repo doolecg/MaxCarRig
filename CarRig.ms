@@ -128,7 +128,7 @@ buttonText:"SCR"
 
 		-- Aim null (Position Script): Look ahead units further along the spline than the car.
 		local aimScript = @"(
-	local len = curveLength sp 1
+	local len = %LEN%
 	local a = if len < 0.001 then 0.0 else ahead / len
 	local u = if rigCA.reverse then 1.0 - progress / 100.0 - a else progress / 100.0 + a
 	u = if isClosed sp 1 then (mod ((mod u 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 u))
@@ -142,7 +142,7 @@ buttonText:"SCR"
 		local steerScript = @"(
 	local len, u, s, uf, ua, t, v, ang, k
 	fn wrapU sp x = if isClosed sp 1 then (mod ((mod x 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 x))
-	len = amax 0.001 (curveLength sp 1)
+	len = %LEN%
 	s = if rigCA.reverse then -1.0 else 1.0
 	u = progress / 100.0
 	if rigCA.reverse do u = 1.0 - u
@@ -160,7 +160,7 @@ buttonText:"SCR"
 		local bankScript = @"(
 	local len, u, s, uf, ua, t, v, ang, k
 	fn wrapU sp x = if isClosed sp 1 then (mod ((mod x 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 x))
-	len = amax 0.001 (curveLength sp 1)
+	len = %LEN%
 	s = if rigCA.reverse then -1.0 else 1.0
 	u = progress / 100.0
 	if rigCA.reverse do u = 1.0 - u
@@ -180,7 +180,7 @@ buttonText:"SCR"
 		-- The helper carries the wheel pivot's own orientation (%BASE%) and spins about the pivot axis
 		-- that points across the car (%AXIS%), so a wheel spins about its own axle.
 		local spinScript = @"(
-	local dist = progress / 100.0 * (curveLength sp 1)
+	local dist = progress / 100.0 * %LEN%
 	((%AXIS% (%SIGN% * spin * dist / %RADIUS% * 180.0 / pi)) * %BASE%) as quat
 )"
 
@@ -325,7 +325,10 @@ buttonText:"SCR"
 		-- Every local is declared at the top: Max 2026 throws "Bad free thunk" for locals
 		-- declared inside if/else blocks and then read in a for-loop.
 		fn buildRig cars path grounds bottom fwdIndex mode rayUp wheels usePivot lookAhead steerMax bank = (
-			local picked, base, tm, inv, bb, carLen, carWid, carSize, wheelSize, root, m, ca, offs
+			local picked, base, tm, inv, bb, carLen, carWid, carSize, wheelSize, root, m, ca, offs, lenText
+			-- The spline length is measured once here and written into the scripts: measuring it every frame
+			-- in every script was a large share of the playback cost. Rebuild the rig after editing the spline.
+			lenText = (amax 0.001 (curveLength path 1)) as string
 			local aim, ac, fl, fr, steering, front, axleZ, bankTm, bankH, bc, sc, st, sh, wheelParts, bodyNodes, c, s, ctrl, spinH, spc, wheelHolder, wt, axisK, axisSign, baseRot
 			local steerHs = #(undefined, undefined), corners = #("FL", "FR", "RL", "RR"), axisNames = #("rotateXMatrix", "rotateYMatrix", "rotateZMatrix")
 
@@ -379,7 +382,7 @@ buttonText:"SCR"
 				ac.AddTarget "progress" ca[#progress].controller
 				ac.AddTarget "ahead" ca[#lookAhead].controller
 				ac.AddObject "rigCA" ca
-				ac.script = aimScript
+				ac.script = substituteString aimScript "%LEN%" lenText
 				setUserProp root "MaxCarRig_aim" aim.handle
 
 				fl = wheels[1]
@@ -401,12 +404,12 @@ buttonText:"SCR"
 				bankH.rotation.controller = bc
 				addSteerInputs bc path ca
 				bc.AddTarget "bank" ca[#bank].controller
-				bc.script = substituteString bankScript "%FRONTDIST%" (front.x as string)
+				bc.script = substituteString (substituteString bankScript "%FRONTDIST%" (front.x as string)) "%LEN%" lenText
 
 				if steering do (
 					sc = rotation_script()
 					addSteerInputs sc path ca
-					sc.script = substituteString steerScript "%FRONTDIST%" (front.x as string)
+					sc.script = substituteString (substituteString steerScript "%FRONTDIST%" (front.x as string)) "%LEN%" lenText
 					for i = 1 to 2 do (
 						st = copy tm
 						st.row4 = wheelCentre wheels[i] usePivot
@@ -435,7 +438,7 @@ buttonText:"SCR"
 					s = substituteString spinScript "%RADIUS%" ((amax 0.001 (wheelRadius wheels[i])) as string)
 					s = substituteString s "%AXIS%" axisNames[axisK]
 					s = substituteString s "%SIGN%" (axisSign as string)
-					spc.script = substituteString s "%BASE%" ("(" + baseRot as string + ")")
+					spc.script = substituteString (substituteString s "%BASE%" ("(" + baseRot as string + ")")) "%LEN%" lenText
 					spinH.rotation.controller = spc
 					linkTo wheels[i] spinH
 					-- Brakes and callipers steer with the wheel but must not spin with it.
@@ -496,6 +499,7 @@ buttonText:"SCR"
 		dotNetControl lblTitle "System.Windows.Forms.Label" width:234 height:30 offset:[0,-5]
 		group "Car"
 		(
+		button btnAuto "Auto detect by name" width:230
 			button btnCar "Use selection as car" width:230
 			label lblCar "No car set" align:#left
 		)
@@ -538,6 +542,7 @@ buttonText:"SCR"
 		)
 		button btnBuild "Build rig" width:230 height:28
 		button btnRemove "Remove selected rig" width:230
+		button btnBake "Bake selected rig to keys" width:230
 		button btnCheck "Check steering (selected rig)" width:230
 		button btnSpeed "Speed test (selected rig)" width:230
 		button btnLog "Open log" width:230
@@ -567,6 +572,7 @@ buttonText:"SCR"
 			lblBrand.Text = "VISUALISATION ONE      v" + toolVersion
 			lblTitle.Font = dotNetObject "System.Drawing.Font" "Georgia" 15 fontStyle.Regular
 			lblTitle.Text = "Simple Car Rig"
+			spAhead.value = units.decodeValue "8m"
 			logLine ("Opened tool v" + toolVersion + ". Max version " + ((maxVersion())[1] as string) + ", log: " + logPath)
 			refreshUI()
 		)
@@ -575,6 +581,104 @@ buttonText:"SCR"
 			refreshUI()
 		)
 		on rbGround changed s do logLine ("Ground " + groundNames[s])
+
+		-- Auto detect finds the parts by name: FRONT_LEFT, FRONT_RIGHT, BACK_LEFT, BACK_RIGHT (or REAR_),
+		-- BODY, CAR PATH and CAR SURFACE. Spaces, dashes and upper or lower case do not matter.
+		fn tagOf n = toUpper (substituteString (substituteString n.name " " "_") "-" "_")
+		fn findTagged tags = (
+			local hit = undefined
+			for n in objects where hit == undefined and findItem tags (tagOf n) != 0 do hit = n
+			hit
+		)
+
+		on btnAuto pressed do (
+			local body, w, surf, found = #(), missing = #(), i
+			local pbs = #(pbFL, pbFR, pbRL, pbRR), cornerNames = #("FL", "FR", "RL", "RR")
+			local wheelTags = #( \
+				#("FRONT_LEFT", "FL", "LEFT_FRONT", "WHEEL_FL", "FRONT_LEFT_WHEEL"), \
+				#("FRONT_RIGHT", "FR", "RIGHT_FRONT", "WHEEL_FR", "FRONT_RIGHT_WHEEL"), \
+				#("BACK_LEFT", "REAR_LEFT", "RL", "BL", "LEFT_REAR", "LEFT_BACK", "WHEEL_RL", "BACK_LEFT_WHEEL", "REAR_LEFT_WHEEL"), \
+				#("BACK_RIGHT", "REAR_RIGHT", "RR", "BR", "RIGHT_REAR", "RIGHT_BACK", "WHEEL_RR", "BACK_RIGHT_WHEEL", "REAR_RIGHT_WHEEL"))
+
+			body = findTagged #("BODY", "CAR_BODY")
+			if body != undefined then (
+				carNodes = withDescendants #(body)
+				lblCar.text = carNodes.count as string + " object(s): " + body.name
+				append found ("car " + body.name + " (" + carNodes.count as string + " parts)")
+			) else append missing "BODY"
+
+			for i = 1 to 4 do (
+				w = findTagged wheelTags[i]
+				if w != undefined then (
+					wheelNodes[i] = w
+					pbs[i].object = w
+					append found (cornerNames[i] + " " + w.name)
+				) else append missing wheelTags[i][1]
+			)
+
+			w = findTagged #("CAR_PATH", "PATH")
+			if w != undefined and shapeFilt w then (
+				pathShape = w
+				pbPath.object = w
+				append found ("path " + w.name)
+			) else append missing "CAR PATH"
+
+			surf = findTagged #("CAR_SURFACE", "SURFACE")
+			if surf != undefined then (
+				groundList = for g in withDescendants #(surf) where geoFilt g collect g
+				rbGround.state = 1
+				append found ("ground " + surf.name + " (" + groundList.count as string + " objects)")
+			) else append missing "CAR SURFACE"
+
+			-- BOTTOM is looked up by the tool's own helper name only: cars often have a mesh called "bottom".
+			w = undefined
+			for n in objects where w == undefined and matchPattern n.name pattern:"CarRig_BOTTOM*" and findItem carNodes n == 0 do w = n
+			if w == undefined and carNodes.count > 0 do undo "Create BOTTOM" on (w = makeBottom carNodes)
+			if w != undefined do (
+				bottomNode = w
+				pbBottom.object = w
+				append found ("BOTTOM " + w.name)
+			)
+
+			if (for x in wheelNodes where isValidNode x collect x).count == 4 and groundList.count > 0 do rbMode.state = 3
+			refreshUI()
+			logLine ("Auto detect. Found: " + listText found + " | missing: " + listText missing)
+			messageBox ("Found:\n" + listText found + (if missing.count > 0 then ("\n\nNot found: " + listText missing) else "")) title:"Car Rig"
+		)
+
+		-- Records every scripted rig node as plain keys on every frame and removes the scripts, so playback
+		-- costs nothing. The Car Rig modifier stops driving the car after this; build again to change it.
+		on btnBake pressed do (
+			local root, all, nodes, h, aimH, samples, row, i, k, f, frames
+			root = (for o in selection where getUserProp o "MaxCarRig" == true collect o)[1]
+			if root == undefined then messageBox "Select a rig first (the ..._CarRig rectangle)." title:"Car Rig"
+			else if queryBox "Bake this rig to keys on every frame?\n\nPlayback gets fast, but the Car Rig modifier controls stop working. Undo, or build again, to go back." title:"Car Rig" do (
+				all = withDescendants #(root)
+				h = getUserProp root "MaxCarRig_aim"
+				aimH = if h == undefined then undefined else maxOps.getNodeByHandle h
+				-- Parents before children (withDescendants is breadth first), so each key lands in the right space.
+				nodes = #(root)
+				if isValidNode aimH do append nodes aimH
+				for n in all where getUserProp n "MaxCarRig_helper" == true do append nodes n
+				frames = #()
+				for f = animationRange.start to animationRange.end do append frames f
+				samples = #()
+				for i = 1 to nodes.count do (
+					row = #()
+					for k = 1 to frames.count do append row (at time frames[k] nodes[i].transform)
+					append samples row
+				)
+				undo "Bake car rig" on (
+					for i = 1 to nodes.count do nodes[i].transform.controller = prs()
+					with animate on (
+						for i = 1 to nodes.count do
+							for k = 1 to frames.count do at time frames[k] nodes[i].transform = samples[i][k]
+					)
+				)
+				setUserProp root "MaxCarRig_baked" true
+				logLine ("Baked " + root.name + ": " + nodes.count as string + " nodes over " + frames.count as string + " frames")
+			)
+		)
 
 		on btnCar pressed do (
 			carNodes = for o in selection collect o
