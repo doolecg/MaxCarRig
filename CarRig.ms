@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.4.0" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.5.0" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
@@ -159,9 +159,14 @@ buttonText:"SCR"
 	(eulerAngles 0 0 (amax (-steerMax) (amin steerMax ang))) as quat
 )"
 
-		-- Body bank (Rotation Script): roll follows the same steer angle. Positive Bank leans out of the turn.
+		-- Body (Transform Script, parent-relative): roll from the steer angle (positive Bank leans out of the
+		-- turn), plus realistic body motion: the body follows the rig's rise, pitch and roll a few frames late.
+		-- The lag is a weighted average of the last frames (weights fall off over Body lag frames), so it is the
+		-- same every time you scrub or render. Body follow scales how much of it the body takes.
 		local bankScript = @"(
 	local len, u, s, uf, ua, t, v, ang, k
+	local rest = %REST%
+	local dh = 0.0, dp = 0.0, dr = 0.0, n, i, w, wsum, tk, m, uk, pk, hh, pp, rr, h0, p0, r0, out
 	fn wrapU sp x = if isClosed sp 1 then (mod ((mod x 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 x))
 	len = %LEN%
 	s = if rigCA.reverse then -1.0 else 1.0
@@ -175,7 +180,40 @@ buttonText:"SCR"
 	v.z = 0.0
 	ang = if (length v) < 0.001 or (length t) < 0.001 then 0.0 else atan2 ((cross t v).z) (dot t v)
 	k = if steerMax < 0.001 then 0.0 else amax (-1.0) (amin 1.0 (ang / steerMax))
-	(eulerAngles (bank * k) 0 0) as quat
+	if rigCA.realistic and rigCA.bodyFollow > 0.0 and rigCA.bodyLag > 0.0 do
+	(
+		n = (amin 12 (ceil (rigCA.bodyLag * 2.0))) as integer
+		wsum = 0.0
+		hh = 0.0
+		pp = 0.0
+		rr = 0.0
+		for i = 0 to n do
+		(
+			tk = (F - i) as time
+			m = at time tk rig.transform
+			uk = (at time tk progCtrl.value) / 100.0
+			if rigCA.reverse do uk = 1.0 - uk
+			pk = in coordsys world lengthInterp sp 1 (wrapU sp uk)
+			w = exp (-(i as float) / rigCA.bodyLag)
+			hh += w * (m.row4.z - pk.z)
+			pp += w * (asin (amax (-1.0) (amin 1.0 (normalize m.row1).z)))
+			rr += w * (asin (amax (-1.0) (amin 1.0 (normalize m.row2).z)))
+			wsum += w
+			if i == 0 do
+			(
+				h0 = m.row4.z - pk.z
+				p0 = asin (amax (-1.0) (amin 1.0 (normalize m.row1).z))
+				r0 = asin (amax (-1.0) (amin 1.0 (normalize m.row2).z))
+			)
+		)
+		dh = rigCA.bodyFollow * (hh / wsum - h0)
+		dp = rigCA.bodyFollow * (pp / wsum - p0)
+		dr = rigCA.bodyFollow * (rr / wsum - r0)
+	)
+	-- Roll about X (left side up is positive), pitch about Y (nose up is negative about Y).
+	out = (rotateXMatrix (bank * k + dr)) * (rotateYMatrix (-dp))
+	out.row4 = rest + [0, 0, dh]
+	out
 )"
 
 		-- Suspension (Position Script, one per wheel): a ray under the wheel's contact point; the wheel moves
@@ -206,7 +244,7 @@ buttonText:"SCR"
 )"
 
 		-- The controls on the rig's "Car Rig" modifier. All are animatable.
-		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4f94)
+		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4f95)
 		(
 			parameters main rollout:params
 			(
@@ -219,6 +257,9 @@ buttonText:"SCR"
 				spin type:#float ui:spSpin default:1.0
 				suspension type:#float ui:spSusp default:1.0
 				travel type:#worldUnits ui:spTravel default:100.0
+				realistic type:#boolean ui:cbRealistic default:true
+				bodyFollow type:#float ui:spFollow default:0.6
+				bodyLag type:#float ui:spLag default:4.0
 			)
 			rollout params "Car Rig"
 			(
@@ -231,10 +272,13 @@ buttonText:"SCR"
 				spinner spSpin "Tyre spin x" range:[-100, 100, 1]
 				spinner spSusp "Suspension" range:[0, 1, 1]
 				spinner spTravel "Travel" type:#worldunits range:[0, 1e6, 100]
+				checkbox cbRealistic "Realistic body motion"
+				spinner spFollow "Body follow" range:[0, 1, 0.6]
+				spinner spLag "Body lag (frames)" range:[0, 12, 4]
 			)
 		)
 
-		local toolVersion = "0.4.0"
+		local toolVersion = "0.5.0"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -350,7 +394,7 @@ buttonText:"SCR"
 		-- Every local is declared at the top: Max 2026 throws "Bad free thunk" for locals
 		-- declared inside if/else blocks and then read in a for-loop.
 		fn buildRig cars path grounds bottom fwdIndex mode rayUp wheels usePivot lookAhead steerMax bank = (
-			local picked, base, tm, inv, bb, carLen, carWid, carSize, wheelSize, root, m, ca, offs, lenText, suspH, psc, cw, rest
+			local picked, base, tm, inv, bb, carLen, carWid, carSize, wheelSize, root, m, ca, offs, lenText, suspH, psc, cw, rest, bankRest
 			-- The spline length is measured once here and written into the scripts: measuring it every frame
 			-- in every script was a large share of the playback cost. Rebuild the rig after editing the spline.
 			lenText = (amax 0.001 (curveLength path 1)) as string
@@ -427,11 +471,14 @@ buttonText:"SCR"
 				bankTm.row4 = tm.pos + [0, 0, axleZ]
 				bankH = rigHelper (base + "_CarRig_Bank") bankTm (carSize * 0.4) (color 150 138 122) false
 				bankH.parent = root
-				bc = rotation_script()
-				bankH.rotation.controller = bc
+				bankRest = bankH.position.controller.value
+				bc = transform_script()
 				addSteerInputs bc path ca
 				bc.AddTarget "bank" ca[#bank].controller
-				bc.script = substituteString (substituteString bankScript "%FRONTDIST%" (front.x as string)) "%LEN%" lenText
+				bc.AddNode "rig" root
+				bc.AddObject "progCtrl" ca[#progress].controller
+				bc.script = substituteString (substituteString (substituteString bankScript "%FRONTDIST%" (front.x as string)) "%LEN%" lenText) "%REST%" (bankRest as string)
+				bankH.transform.controller = bc
 
 				if steering do (
 					sc = rotation_script()
@@ -686,7 +733,7 @@ buttonText:"SCR"
 			"4. Pick a mode. Per wheel follows bumps best.\n\n" + \
 			"5. Press Build rig.\n\n" + \
 			"6. Select the rig rectangle. The Car Rig modifier sets\n" + \
-			"    Progress, Look ahead, Max steer, Bank, Tyre spin and Reverse.\n\n" + \
+			"    Progress, steering, Bank, Tyre spin, Suspension and Realistic body motion.\n\n" + \
 			"7. For smooth playback, press Bake a copy of the selected rig.\n" + \
 			"    The copy gets its own layer and the rig is hidden. Esc cancels.\n\n" + \
 			"8. To take the rig off, select it and press Remove selected rig.\n\n" + \
