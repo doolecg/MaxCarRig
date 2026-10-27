@@ -548,11 +548,11 @@ buttonText:"SCR"
 		button btnLog "Open log" width:230
 		group "About"
 		(
-			label lblA1 "Provided \"as is\", without warranty, under" align:#left
-			label lblA2 "the MIT licence. To the extent permitted" align:#left
-			label lblA3 "by law, the authors are not liable for" align:#left
-			label lblA4 "any loss or damage from using it." align:#left
-			label lblA5 "Back up your work." align:#left
+			label lblA0 "(c) 2026 Visualisation One. All rights reserved." align:#left
+			label lblA1 "Provided \"as is\", without warranty. To the" align:#left
+			label lblA2 "extent permitted by law, the authors are" align:#left
+			label lblA3 "not liable for any loss or damage from" align:#left
+			label lblA4 "using it. Back up your work." align:#left
 		)
 
 		fn refreshUI = (

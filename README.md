@@ -43,10 +43,12 @@ Nothing leaves your machine. The script makes no network calls and writes no fil
 
 ## Licence
 
-MIT, see [LICENSE](LICENSE). Not affiliated with or endorsed by Autodesk. 3ds Max is a trademark of Autodesk, Inc.
+Proprietary. Copyright (c) 2026 Visualisation One. All rights reserved; see [LICENSE](LICENSE). Not affiliated with or endorsed by Autodesk. 3ds Max is a trademark of Autodesk, Inc.
 
 ## Disclaimer
 
-This software is provided "as is", without warranty of any kind, as set out in the [LICENSE](LICENSE). To the extent permitted by law, the authors are not liable for any loss or damage from using it, including lost data, lost work or damage to files or projects. Nothing here limits liability that cannot be limited by law, such as for death or personal injury caused by negligence.
+Copyright (c) 2026 Visualisation One. All rights reserved. No licence is granted to copy, change or share this code unless Visualisation One says so in writing.
+
+This software is provided "as is", without warranty of any kind. To the extent permitted by law, the authors are not liable for any loss or damage from using it, including lost data, lost work or damage to files or projects. Nothing here limits liability that cannot be limited by law, such as for death or personal injury caused by negligence.
 
 Back up your work before using it. You use it at your own risk.
