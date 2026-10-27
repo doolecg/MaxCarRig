@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.5.0" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.5.1" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
@@ -278,7 +278,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.5.0"
+		local toolVersion = "0.5.1"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -907,49 +907,56 @@ buttonText:"SCR"
 			logLine "Ground list cleared"
 			refreshUI()
 		)
-		-- Times each part of the selected rig over 30 frames, then the viewport redraw with the car
-		-- shown and hidden, so the log says what is slow instead of guessing.
+		-- Quick speed test: times the rig root, the aim and one helper of each kind over 3 frames, then the
+		-- viewport redraw with the car shown and hidden. Esc or Cancel stops it; what was measured is kept.
 		on btnSpeed pressed do (
-			local root, all, helpers, carParts, wasHidden, aimH, h, t0, ms, tNow, frames = 30, start, span
+			local root, all, carParts, wasHidden, aimH, h, t0, tNow, frames = 3, start, span, probes, kinds, hit, i, k, stopped, timeAt
 			root = (for o in selection where getUserProp o "MaxCarRig" == true collect o)[1]
-			if root == undefined then messageBox "Select a rig first (the green ..._CarRig rectangle)." title:"Car Rig"
+			if root == undefined then messageBox "Select a rig first (the ..._CarRig rectangle)." title:"Car Rig"
 			else (
 				all = withDescendants #(root)
-				helpers = for n in all where getUserProp n "MaxCarRig_helper" == true collect n
 				carParts = for n in all where n != root and getUserProp n "MaxCarRig_helper" != true collect n
 				h = getUserProp root "MaxCarRig_aim"
 				aimH = if h == undefined then undefined else maxOps.getNodeByHandle h
 				start = animationRange.start
 				span = animationRange.end - animationRange.start
 				tNow = sliderTime
-				logLine ("Speed test on " + root.name + ": " + frames as string + " frames, " + helpers.count as string + " helpers, " + carParts.count as string + " car parts")
-
-				t0 = timeStamp()
-				for i = 1 to frames do at time (start + span * i / frames) root.transform
-				logLine ("  rig root (ground rays): " + ((timeStamp() - t0) / frames as float) as string + " ms per frame")
-
-				if isValidNode aimH do (
-					t0 = timeStamp()
-					for i = 1 to frames do at time (start + span * i / frames) aimH.transform
-					logLine ("  aim null: " + ((timeStamp() - t0) / frames as float) as string + " ms per frame")
+				probes = #(#("rig root (ground rays)", root))
+				if isValidNode aimH do append probes #("aim null", aimH)
+				kinds = #(#("body", "*_CarRig_Bank*"), #("steering", "*_CarRig_Steer*"), #("suspension", "*_CarRig_Susp*"), #("tyre spin", "*_CarRig_Spin*"))
+				for k in kinds do (
+					hit = undefined
+					for n in all where hit == undefined and matchPattern n.name pattern:k[2] do hit = n
+					if hit != undefined do append probes #(k[1], hit)
 				)
-				for n in helpers do (
+				logLine ("Speed test on " + root.name + ": " + frames as string + " frames, " + carParts.count as string + " car parts")
+				stopped = false
+				escapeEnable = false
+				progressStart "Speed test (Esc or Cancel to stop)"
+				for k = 1 to probes.count while not stopped do (
 					t0 = timeStamp()
-					for i = 1 to frames do at time (start + span * i / frames) n.transform
-					logLine ("  " + n.name + ": " + ((timeStamp() - t0) / frames as float) as string + " ms per frame")
+					for i = 1 to frames do at time (start + span * i / frames) probes[k][2].transform
+					logLine ("  " + probes[k][1] + ": " + ((timeStamp() - t0) / frames as float) as string + " ms per frame")
+					if not (progressUpdate (100.0 * k / (probes.count + 2))) or keyboard.escPressed do stopped = true
 				)
-
-				t0 = timeStamp()
-				for i = 1 to frames do (sliderTime = start + span * i / frames; completeRedraw())
-				ms = (timeStamp() - t0) / frames as float
-				logLine ("  viewport redraw, car shown: " + ms as string + " ms per frame")
-				wasHidden = for n in carParts collect n.isHidden
-				for n in carParts do n.isHidden = true
-				t0 = timeStamp()
-				for i = 1 to frames do (sliderTime = start + span * i / frames; completeRedraw())
-				logLine ("  viewport redraw, car hidden: " + ((timeStamp() - t0) / frames as float) as string + " ms per frame")
-				for i = 1 to carParts.count do carParts[i].isHidden = wasHidden[i]
+				if not stopped do (
+					t0 = timeStamp()
+					for i = 1 to frames do (sliderTime = start + span * i / frames; completeRedraw())
+					logLine ("  viewport redraw, car shown: " + ((timeStamp() - t0) / frames as float) as string + " ms per frame")
+					if not (progressUpdate (100.0 * (probes.count + 1) / (probes.count + 2))) or keyboard.escPressed do stopped = true
+				)
+				if not stopped do (
+					wasHidden = for n in carParts collect n.isHidden
+					for n in carParts do n.isHidden = true
+					t0 = timeStamp()
+					for i = 1 to frames do (sliderTime = start + span * i / frames; completeRedraw())
+					logLine ("  viewport redraw, car hidden: " + ((timeStamp() - t0) / frames as float) as string + " ms per frame")
+					for i = 1 to carParts.count do carParts[i].isHidden = wasHidden[i]
+				)
+				progressEnd()
+				escapeEnable = true
 				sliderTime = tNow
+				if stopped do logLine "  speed test stopped early"
 				messageBox ("Speed test done. Press Open log and send me the Speed test lines.") title:"Car Rig"
 			)
 		)
