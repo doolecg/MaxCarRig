@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.9.4" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.9.5" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
@@ -459,7 +459,7 @@ buttonText:"SCR"
 )"
 
 		-- The controls on the rig's "Car Rig" modifier. All are animatable.
-		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4f9b)
+		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4f9c)
 		(
 			parameters main rollout:params
 			(
@@ -483,15 +483,79 @@ buttonText:"SCR"
 				cornerAmount type:#float ui:spCornerAmt default:0.5
 				cornerRadius type:#worldUnits ui:spCornerRad default:20000.0
 				cornerBrake type:#worldUnits ui:spCornerBrake default:15000.0
+				-- The tyre radius, set at build; suspension presets set Travel as a share of it.
+				wheelR type:#worldUnits default:350.0
 				bodyFollow type:#float ui:spFollow default:1.0
 				bodyLag type:#float ui:spLag default:3.0
 			)
 			-- Short labels in groups: the command panel is narrow and long labels get cut off.
 			rollout params "Car Rig"
 			(
+				-- Suspension feel. Values: suspension, travel (share of tyre radius), body follow, body lag,
+				-- bank ease, start ease, stop ease. Soft settles slowly and moves a lot; hard is quick and tight.
+				fn applySuspension k =
+				(
+					local p
+					p = case k of
+					(
+						1: #(1.0, 0.7, 1.0, 5.0, 40.0, 12.0, 10.0)
+						2: #(1.0, 0.5, 0.8, 3.0, 25.0, 8.0, 6.0)
+						default: #(0.8, 0.25, 0.5, 2.0, 12.0, 5.0, 3.0)
+					)
+					suspension = p[1]
+					travel = wheelR * p[2]
+					bodyFollow = p[3]
+					bodyLag = p[4]
+					bankTime = p[5]
+					startTime = p[6]
+					pitchTime = p[7]
+					realistic = true
+				)
+				dropdownlist ddSusp "Suspension" items:#("Choose...", "Soft", "Mid", "Hard")
+				on ddSusp selected i do
+				(
+					if i > 1 do applySuspension (i - 1)
+					ddSusp.selection = 1
+				)
+				-- How car types usually handle. Values: bank per g, max bank, dive per g, max dive, max steer,
+				-- suspension feel (1 soft, 2 mid, 3 hard), corner slowdown amount (0 = leave it as it is).
+				dropdownlist ddCarType "Car type" items:#("Choose...", "Saloon", "Hatchback", "Sports car", "Supercar", "Muscle car", "SUV / 4x4", "Van", "Truck / lorry", "Off-road buggy", "Classic car")
+				on ddCarType selected i do
+				(
+					local c
+					c = case i of
+					(
+						2: #(20.0, 12.0, 18.0, 4.0, 35.0, 2, 0.0)
+						3: #(18.0, 10.0, 15.0, 4.0, 38.0, 2, 0.0)
+						4: #(8.0, 6.0, 8.0, 2.5, 32.0, 3, 0.0)
+						5: #(5.0, 4.0, 6.0, 2.0, 30.0, 3, 0.0)
+						6: #(25.0, 14.0, 25.0, 6.0, 33.0, 1, 0.0)
+						7: #(30.0, 18.0, 25.0, 6.0, 36.0, 1, 0.0)
+						8: #(35.0, 20.0, 22.0, 5.0, 38.0, 1, 0.5)
+						9: #(40.0, 22.0, 15.0, 4.0, 40.0, 2, 0.7)
+						10: #(15.0, 12.0, 20.0, 6.0, 35.0, 1, 0.0)
+						11: #(35.0, 20.0, 30.0, 6.0, 38.0, 1, 0.0)
+						default: undefined
+					)
+					if c != undefined do
+					(
+						applySuspension c[6]
+						bank = c[1]
+						maxBank = c[2]
+						diveSquat = c[3]
+						maxPitch = c[4]
+						steerMax = c[5]
+						if c[7] > 0.0 do
+						(
+							cornerSlow = true
+							cornerAmount = c[7]
+						)
+					)
+					ddCarType.selection = 1
+				)
 				-- Presets fill in Bank, Dive / squat and Body. Values: bank, bank ease, max bank, dive, start ease,
 				-- stop ease, max dive, follow, lag, realistic. V1 default is the studio's approved look.
-				dropdownlist ddPreset "Preset" items:#("Choose a preset...", "V1 default", "Subtle", "Sporty", "Exaggerated", "Off (no body motion)")
+				dropdownlist ddPreset "Body look" items:#("Choose a preset...", "V1 default", "Subtle", "Sporty", "Exaggerated", "Off (no body motion)")
 				on ddPreset selected i do
 				(
 					local p = case i of
@@ -561,7 +625,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.9.4"
+		local toolVersion = "0.9.5"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -717,6 +781,7 @@ buttonText:"SCR"
 			ca.rayUp = rayUp
 			ca.cornerRadius = units.decodeValue "20m"
 			ca.cornerBrake = units.decodeValue "15m"
+			ca.wheelR = if picked.count > 0 then wheelRadius picked[1] else carSize * 0.06
 			-- Progress runs 0 to 100 over the active time range on linear keys, so the speed is constant.
 			with animate on (
 				at time animationRange.start ca.progress = 0.0
