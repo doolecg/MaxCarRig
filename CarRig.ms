@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.10.0" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.10.1" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
@@ -656,7 +656,7 @@ buttonText:"SCR"
 				)
 				fn speedAt n t =
 				(
-					local mps = (distance (at time (t + 1) n.pos) (at time (t - 1) n.pos)) / 2.0 * frameRate / (amax 0.0001 this.metre)
+					local mps = (distance (at time (t + 1) n.transform).row4 (at time (t - 1) n.transform).row4) / 2.0 * frameRate / (amax 0.0001 this.metre)
 					#(mps * 3.6, mps * 2.23694)
 				)
 				fn showSpeed =
@@ -782,7 +782,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.10.0"
+		local toolVersion = "0.10.1"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
