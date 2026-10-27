@@ -1,3 +1,26 @@
+# V1 Simple Car Rig 0.11.0
+
+## New
+- Corner speed: with Slow on corners on, the car never goes faster than each bend allows, brakes for bends at Braking g, keeps its speed if it is already slow enough, then pulls away again.
+- Speed readout in km/h and mph from the scene units, top speed, and Set run from speed.
+- Car Rig modifier split into six folding panels: presets, drive and speed, bank and dive, wheels, body, corners.
+- Presets stay showing what was picked and are saved with the scene.
+
+---
+
+## Changed
+- More bank on corners: V1 default 70 degrees per g, car types lean about 1.5 times more.
+- Speed unit defaults to mph.
+- Wider number boxes and shorter labels.
+
+---
+
+## Fixed
+- Panels flickering while scrubbing (the speed readout now updates on a button).
+- Speed readout error "Unknown property pos".
+
+---
+
 # V1 Simple Car Rig 0.9.6
 
 ## New
