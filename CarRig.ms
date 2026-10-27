@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.10.1" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.11.0" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
@@ -81,75 +81,6 @@ buttonText:"SCR"
 		)
 		tab
 	)
-	-- Corner slowdown: re-times travel along the spline so the car spends longer in bends and makes it up on
-	-- straights; start and finish stay where the Progress keys put them. Bend sharpness is averaged over the
-	-- brake distance either side, so the car slows before a bend and picks up after it.
-	global MaxCarRig_warps
-	fn warpTable sp amt radius brake =
-	(
-		local tab, w, e, i, n, pts, lens, tans, kap, ks, sum, lo, hi, a, b, d, wt, tsum
-		tab = splineTable sp
-		if MaxCarRig_warps == undefined do MaxCarRig_warps = #()
-		for e in MaxCarRig_warps where e[1] == sp and e[6] == tab[3] and e[7] == tab[1].count and e[2] == amt and e[3] == radius and e[4] == brake do w = e[5]
-		if w == undefined do
-		(
-			pts = tab[1]
-			lens = tab[2]
-			tans = tab[4]
-			n = pts.count
-			kap = #()
-			for i = 1 to n do
-			(
-				a = tans[amax 1 (i - 1)] * [1, 1, 0]
-				b = tans[amin n (i + 1)] * [1, 1, 0]
-				d = lens[amin n (i + 1)] - lens[amax 1 (i - 1)]
-				append kap (if d < 0.0001 or (length a) < 0.0001 or (length b) < 0.0001 then 0.0 else (acos (amax (-1.0) (amin 1.0 (dot (normalize a) (normalize b))))) * pi / 180.0 / d)
-			)
-			ks = #()
-			lo = 1
-			hi = 1
-			sum = 0.0
-			for i = 1 to n do
-			(
-				while hi <= n and lens[hi] <= lens[i] + brake do (sum += kap[hi]; hi += 1)
-				while lens[lo] < lens[i] - brake do (sum -= kap[lo]; lo += 1)
-				append ks (sum / (amax 1 (hi - lo)))
-			)
-			w = #(0.0)
-			tsum = 0.0
-			for i = 2 to n do
-			(
-				wt = 1.0 / (1.0 + amt * radius * (ks[i] + ks[i - 1]) / 2.0)
-				tsum += (lens[i] - lens[i - 1]) / wt
-				append w tsum
-			)
-			for i = 1 to n do w[i] = w[i] / (amax 0.0001 tsum)
-			append MaxCarRig_warps #(sp, amt, radius, brake, w, tab[3], tab[1].count)
-			if MaxCarRig_warps.count > 8 do deleteItem MaxCarRig_warps 1
-		)
-		w
-	)
-	fn warpQ sp q useIt amt radius brake =
-	(
-		local tab, w, lo, hi, mid, a, base
-		if not useIt or amt <= 0.0 then q
-		else
-		(
-			base = floor q
-			q = q - base
-			tab = splineTable sp
-			w = warpTable sp amt radius brake
-			lo = 1
-			hi = w.count
-			while hi - lo > 1 do
-			(
-				mid = (lo + hi) / 2
-				if w[mid] <= q then lo = mid else hi = mid
-			)
-			a = if w[hi] > w[lo] then (q - w[lo]) / (w[hi] - w[lo]) else 0.0
-			base + (tab[2][lo] + (tab[2][hi] - tab[2][lo]) * a) / tab[3]
-		)
-	)
 	-- Ease in / out: the car speeds up from rest over the first part of the run and slows to rest over the
 	-- last (a and b are those parts as shares of the run). Speed rises and falls in a straight line, so the
 	-- car brakes evenly into the stop; the middle runs a little faster so start and finish stay on the keys.
@@ -180,12 +111,115 @@ buttonText:"SCR"
 		n = if c == undefined then 0 else c.keys.count
 		if n >= 2 then (c.keys[n].time - c.keys[1].time).frame else (animationRange.end - animationRange.start).frame
 	)
-	-- Travelled fraction (0 to 1) for a Progress fraction, with ease in / out and corner slowdown when on.
-	fn travelQ sp q rev useIt amt radius brake easeOn e0 e1 total =
+	-- Corner speed. With Slow on corners on, the car is driven by a simple speed planner instead of by the
+	-- Progress keys directly: it pulls away from rest (Start frames), cruises at the top speed of the Progress
+	-- keys, never goes faster than each bend allows, brakes for bends at Braking g, and stops at the end of the
+	-- spline (Stop frames). Corner speed is the limit for a bend of Tight radius; gentler bends allow more
+	-- (the same sideways grip). If the car is already slow enough for a bend it keeps its speed.
+	-- The plan (distance travelled at each frame) is built once per setting and kept in a global.
+	global MaxCarRig_plans
+	fn progAt ca f =
 	(
-		local qq = q
-		if easeOn and total > 0.0 do qq = rampQ q (e0 / total) (e1 / total)
-		if rev then 1.0 - (warpQ sp (1.0 - qq) useIt amt radius brake) else warpQ sp qq useIt amt radius brake
+		local c = try (getPropertyController ca #progress) catch (undefined)
+		if c == undefined then ca.progress / 100.0 else (at time (f as time) c.value) / 100.0
+	)
+	fn planTable sp ca =
+	(
+		local tab, c, key, e, plan, i, n, pts, lens, tans, kap, cap, a, b, d, len, t0, t1, f, s, v, vCruise
+		local qPrev, q, aAcc, aStop, aLat, aBrake, vC, lo, hi, mid, capS, pos, guard
+		tab = splineTable sp
+		c = try (getPropertyController ca #progress) catch (undefined)
+		key = (if c == undefined then #() else (for k in c.keys collect #(k.time, k.value))) as string
+		key += (#(tab[3], tab[1].count, ca.easeOn, ca.easeStart, ca.easeStop, ca.cornerSpeed, ca.speedUnit, ca.cornerRadius, ca.brakeG, ca.reverse, frameRate, ca.metre)) as string
+		if MaxCarRig_plans == undefined do MaxCarRig_plans = #()
+		for e in MaxCarRig_plans where e[1] == sp and e[2] == key do plan = e[3]
+		if plan == undefined do
+		(
+			pts = tab[1]
+			lens = tab[2]
+			tans = tab[4]
+			n = pts.count
+			len = tab[3]
+			-- how sharp the bend is at every sample, in 1 / scene units
+			kap = #()
+			for i = 1 to n do
+			(
+				a = tans[amax 1 (i - 1)] * [1, 1, 0]
+				b = tans[amin n (i + 1)] * [1, 1, 0]
+				d = lens[amin n (i + 1)] - lens[amax 1 (i - 1)]
+				append kap (if d < 0.0001 or (length a) < 0.0001 or (length b) < 0.0001 then 0.0 else (acos (amax (-1.0) (amin 1.0 (dot (normalize a) (normalize b))))) * pi / 180.0 / d)
+			)
+			-- speeds in scene units per frame
+			vC = (if ca.speedUnit == 2 then ca.cornerSpeed / 2.23694 else ca.cornerSpeed / 3.6) * ca.metre / frameRate
+			aLat = vC * vC / (amax 0.001 ca.cornerRadius)
+			aBrake = ca.brakeG * 9.81 * ca.metre / (frameRate * frameRate)
+			cap = for i = 1 to n collect (if kap[i] < 0.0000001 then 1e12 else sqrt (aLat / kap[i]))
+			-- brake before bends: a bend's limit reaches back along the road at Braking g
+			for i = n - 1 to 1 by -1 do cap[i] = amin cap[i] (sqrt (cap[i + 1] * cap[i + 1] + 2.0 * aBrake * (lens[i + 1] - lens[i])))
+			-- run timing from the Progress keys
+			t0 = if c != undefined and c.keys.count >= 1 then c.keys[1].time.frame else animationRange.start.frame
+			t1 = if c != undefined and c.keys.count >= 2 then c.keys[c.keys.count].time.frame else animationRange.end.frame
+			vCruise = 0.0
+			qPrev = progAt ca t0
+			for f = t0 + 1 to t1 do
+			(
+				q = progAt ca f
+				vCruise = amax vCruise ((q - qPrev) * len)
+				qPrev = q
+			)
+			vCruise = amax 0.001 vCruise
+			aAcc = if ca.easeOn and ca.easeStart > 0.0 then vCruise / ca.easeStart else 1e12
+			aStop = if ca.easeOn and ca.easeStop > 0.0 then vCruise / ca.easeStop else 1e12
+			plan = #(t0, #(0.0))
+			s = 0.0
+			v = 0.0
+			guard = 0
+			while s < len and guard < 200000 do
+			(
+				-- the limit for the bend where the car is now (reverse drives the spline from its far end)
+				pos = if ca.reverse then len - s else s
+				lo = 1
+				hi = n
+				while hi - lo > 1 do
+				(
+					mid = (lo + hi) / 2
+					if lens[mid] <= pos then lo = mid else hi = mid
+				)
+				capS = amin cap[lo] cap[hi]
+				v = amin (amin (v + aAcc) vCruise) (amin capS (sqrt (2.0 * aStop * (amax 0.0 (len - s)))))
+				v = amax v (0.0005 * vCruise)
+				s = amin len (s + v)
+				append plan[2] s
+				guard += 1
+			)
+			append MaxCarRig_plans #(sp, key, plan)
+			if MaxCarRig_plans.count > 8 do deleteItem MaxCarRig_plans 1
+		)
+		plan
+	)
+	-- Travelled fraction (0 to 1) at frame f, with ease in / out, and the corner speed planner when on.
+	fn travelAt sp f ca =
+	(
+		local q, total, plan, k, i, a
+		if ca.cornerSlow then
+		(
+			plan = planTable sp ca
+			k = f - plan[1]
+			if k <= 0 then 0.0
+			else
+			(
+				i = (floor k) as integer
+				a = k - i
+				if i + 2 > plan[2].count then 1.0 else (plan[2][i + 1] * (1.0 - a) + plan[2][i + 2] * a) / (splineTable sp)[3]
+			)
+		)
+		else
+		(
+			q = progAt ca f
+			total = progFrames ca
+			if ca.easeOn and total > 0.0 do q = rampQ q (ca.easeStart / total) (ca.easeStop / total)
+			q
+		)
 	)
 	fn splineAt sp f =
 	(
@@ -272,7 +306,7 @@ buttonText:"SCR"
 		local y = normalize (cross z x)
 		matrix3 (cross y z) y z pos
 	)
-	u = travelQ sp (progress / 100.0) rigCA.reverse rigCA.cornerSlow rigCA.cornerAmount rigCA.cornerRadius rigCA.cornerBrake rigCA.easeOn rigCA.easeStart rigCA.easeStop (progFrames rigCA)
+	u = travelAt sp F rigCA
 	if rigCA.reverse do u = 1.0 - u
 	u = if isClosed sp 1 then (mod ((mod u 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 u))
 	sa = splineAt sp u
@@ -324,7 +358,7 @@ buttonText:"SCR"
 	%SPLINEFNS%
 	local len = (splineTable sp)[3]
 	local a = if len < 0.001 then 0.0 else ahead / len
-	local u = (travelQ sp (progress / 100.0) rigCA.reverse rigCA.cornerSlow rigCA.cornerAmount rigCA.cornerRadius rigCA.cornerBrake rigCA.easeOn rigCA.easeStart rigCA.easeStop (progFrames rigCA))
+	local u = travelAt sp F rigCA
 	u = if rigCA.reverse then 1.0 - u - a else u + a
 	u = if isClosed sp 1 then (mod ((mod u 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 u))
 	(splineAt sp u)[1]
@@ -340,7 +374,7 @@ buttonText:"SCR"
 	fn wrapU sp x = if isClosed sp 1 then (mod ((mod x 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 x))
 	len = (splineTable sp)[3]
 	s = if rigCA.reverse then -1.0 else 1.0
-	u = travelQ sp (progress / 100.0) rigCA.reverse rigCA.cornerSlow rigCA.cornerAmount rigCA.cornerRadius rigCA.cornerBrake rigCA.easeOn rigCA.easeStart rigCA.easeStop (progFrames rigCA)
+	u = travelAt sp F rigCA
 	if rigCA.reverse do u = 1.0 - u
 	uf = wrapU sp (u + s * %FRONTDIST% / len)
 	ua = wrapU sp (u + s * ahead / len)
@@ -378,7 +412,7 @@ buttonText:"SCR"
 	nS = (amin 30 (ceil (2.0 * sigS))) as integer
 	nMax = amax nB (amax nP nS)
 	-- prog[k + nMax + 2] is the travelled fraction at frame F + k
-	for k = -(nMax + 1) to nMax + 1 do append prog (travelQ sp ((at time ((F + k) as time) progCtrl.value) / 100.0) rigCA.reverse rigCA.cornerSlow rigCA.cornerAmount rigCA.cornerRadius rigCA.cornerBrake rigCA.easeOn rigCA.easeStart rigCA.easeStop (progFrames rigCA))
+	for k = -(nMax + 1) to nMax + 1 do append prog (travelAt sp (F + k) rigCA)
 	-- bends are measured over 1 m either side
 	delta = metre / len
 	for k = -nMax to nMax do
@@ -432,7 +466,7 @@ buttonText:"SCR"
 		(
 			tk = (F - i) as time
 			j = at time tk rig.transform
-			uk = travelQ sp ((at time tk progCtrl.value) / 100.0) rigCA.reverse rigCA.cornerSlow rigCA.cornerAmount rigCA.cornerRadius rigCA.cornerBrake rigCA.easeOn rigCA.easeStart rigCA.easeStop (progFrames rigCA)
+			uk = travelAt sp (F - i) rigCA
 			if rigCA.reverse do uk = 1.0 - uk
 			pk = (splineAt sp (wrapU sp uk))[1]
 			w = exp (-(i as float) / rigCA.bodyLag)
@@ -488,7 +522,7 @@ buttonText:"SCR"
 		-- that points across the car (%AXIS%), so a wheel spins about its own axle.
 		local spinScript = @"(
 	%SPLINEFNS%
-	local dist = (travelQ sp (progress / 100.0) rigCA.reverse rigCA.cornerSlow rigCA.cornerAmount rigCA.cornerRadius rigCA.cornerBrake rigCA.easeOn rigCA.easeStart rigCA.easeStop (progFrames rigCA)) * (splineTable sp)[3]
+	local dist = (travelAt sp F rigCA) * (splineTable sp)[3]
 	((%AXIS% (%SIGN% * spin * dist / %RADIUS% * 180.0 / pi)) * %BASE%) as quat
 )"
 
@@ -496,7 +530,7 @@ buttonText:"SCR"
 		-- The Car Rig modifier. Each parameter block has its own panel in the command panel, so the settings sit
 		-- in short folding panels instead of one long column. Scripts read values as rigCA.<name>; the tool
 		-- reaches animated values with getPropertyController, which works whichever block they are in.
-		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4fa0)
+		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4fa1)
 		(
 			parameters pPresets rollout:rPresets
 			(
@@ -513,8 +547,8 @@ buttonText:"SCR"
 				easeOn type:#boolean ui:cbEase default:true
 				easeStart type:#float ui:spEaseStart default:40.0
 				easeStop type:#float ui:spEaseStop default:40.0
-				speedSet type:#float ui:spSpeedSet default:50.0
-				speedUnit type:#integer ui:ddUnit default:1
+				speedSet type:#float ui:spSpeedSet default:30.0
+				speedUnit type:#integer ui:ddUnit default:2
 				-- Set at build: one metre in scene units, and the spline, for the speed tools.
 				metre type:#float default:1000.0
 				pathHandle type:#integer default:0
@@ -547,9 +581,9 @@ buttonText:"SCR"
 			parameters pCorner rollout:rCorner
 			(
 				cornerSlow type:#boolean ui:cbCorner default:false
-				cornerAmount type:#float ui:spCornerAmt default:0.5
+				cornerSpeed type:#float ui:spCornerSpeed default:10.0
 				cornerRadius type:#worldUnits ui:spCornerRad default:20000.0
-				cornerBrake type:#worldUnits ui:spCornerBrake default:15000.0
+				brakeG type:#float ui:spBrakeG default:0.5
 			)
 
 			-- Presets stay showing what was picked. Changing a value afterwards keeps the preset name shown.
@@ -576,7 +610,7 @@ buttonText:"SCR"
 					this.realistic = true
 				)
 				-- How car types usually handle. Values: bank per g, max bank, dive per g, max dive, max steer,
-				-- suspension feel (1 soft, 2 mid, 3 hard), corner slowdown amount (0 = leave it as it is).
+				-- suspension feel (1 soft, 2 mid, 3 hard), corner speed in mph (0 = leave corners as they are).
 				dropdownlist ddCarType "Car type" items:#("Custom", "Saloon", "Hatchback", "Sports car", "Supercar", "Muscle car", "SUV / 4x4", "Van", "Truck / lorry", "Off-road buggy", "Classic car")
 				dropdownlist ddSusp "Suspension" items:#("Custom", "Soft", "Mid", "Hard")
 				-- Body look: bank, bank ease, max bank, dive, start ease, stop ease, max dive, follow, lag,
@@ -594,8 +628,8 @@ buttonText:"SCR"
 						5: #(9.0, 6.0, 6.0, 2.0, 30.0, 3, 0.0)
 						6: #(40.0, 18.0, 25.0, 6.0, 33.0, 1, 0.0)
 						7: #(50.0, 22.0, 25.0, 6.0, 36.0, 1, 0.0)
-						8: #(55.0, 25.0, 22.0, 5.0, 38.0, 1, 0.5)
-						9: #(60.0, 28.0, 15.0, 4.0, 40.0, 2, 0.7)
+						8: #(55.0, 25.0, 22.0, 5.0, 38.0, 1, 15.0)
+						9: #(60.0, 28.0, 15.0, 4.0, 40.0, 2, 10.0)
 						10: #(25.0, 16.0, 20.0, 6.0, 35.0, 1, 0.0)
 						11: #(55.0, 25.0, 30.0, 6.0, 38.0, 1, 0.0)
 						default: undefined
@@ -612,7 +646,7 @@ buttonText:"SCR"
 						if c[7] > 0.0 do
 						(
 							this.cornerSlow = true
-							this.cornerAmount = c[7]
+							this.cornerSpeed = if this.speedUnit == 2 then c[7] else c[7] * 1.60934
 						)
 					)
 				)
@@ -668,36 +702,28 @@ buttonText:"SCR"
 						readSpeed.text = "Speed now: " + (formattedPrint v[1] format:".0f") + " km/h  (" + (formattedPrint v[2] format:".0f") + " mph)"
 					)
 				)
-				spinner spProgress "Progress %" range:[-1e6, 1e6, 0] fieldwidth:56
-				spinner spAhead "Look ahead" type:#worldunits range:[0, 1e6, 4000] fieldwidth:56
-				spinner spSteer "Max steer" range:[0, 89, 35] fieldwidth:56
+				spinner spProgress "Progress %" range:[-1e6, 1e6, 0] fieldwidth:64
+				spinner spAhead "Look ahead" type:#worldunits range:[0, 1e6, 4000] fieldwidth:64
+				spinner spSteer "Max steer" range:[0, 89, 35] fieldwidth:64
 				checkbox cbReverse "Reverse along spline"
-				checkbox cbEase "Ease in / out (pull away, stop)"
-				spinner spEaseStart "Start frames" range:[0, 1000, 40] fieldwidth:56
-				spinner spEaseStop "Stop frames" range:[0, 1000, 40] fieldwidth:56
+				checkbox cbEase "Ease in / out"
+				spinner spEaseStart "Start frames" range:[0, 1000, 40] fieldwidth:64
+				spinner spEaseStop "Stop frames" range:[0, 1000, 40] fieldwidth:64
 				group "Speed"
 				(
 					label lblSpeed "Speed now: -" align:#left
-					button btnTop "Measure top speed" width:130
+					button btnTop "Measure speed" width:130
 					label lblTop "" align:#left
-					spinner spSpeedSet "Cruise speed" range:[1, 1000, 50] fieldwidth:44
-					dropdownlist ddUnit "" items:#("km/h", "mph") width:60 align:#right
+					spinner spSpeedSet "Cruise speed" range:[1, 1000, 30] fieldwidth:64
+					dropdownlist ddUnit "Unit" items:#("km/h", "mph") width:70 align:#right
 					button btnSetSpeed "Set run from speed" width:130
 				)
-				on rDrive open do
-				(
-					readSpeed = lblSpeed
-					showSpeed()
-					registerTimeCallback showSpeed
-				)
-				on rDrive close do
-				(
-					unregisterTimeCallback showSpeed
-					readSpeed = undefined
-				)
+				on rDrive open do readSpeed = lblSpeed
+				on rDrive close do readSpeed = undefined
 				on btnTop pressed do
 				(
 					local n = rigNode(), c, t0, t1, best = #(0.0, 0.0), v
+					showSpeed()
 					if n != undefined do
 					(
 						c = getPropertyController this "progress"
@@ -745,44 +771,45 @@ buttonText:"SCR"
 			(
 				group "Bank (turns)"
 				(
-					spinner spBank "Deg per g" range:[-500, 500, 70] fieldwidth:56
-					spinner spBankTime "Ease frames" range:[1, 120, 60] fieldwidth:56
-					spinner spMaxBank "Max deg" range:[0, 90, 45] fieldwidth:56
+					spinner spBank "Deg per g" range:[-500, 500, 70] fieldwidth:64
+					spinner spBankTime "Ease frames" range:[1, 120, 60] fieldwidth:64
+					spinner spMaxBank "Max deg" range:[0, 90, 45] fieldwidth:64
 				)
 				group "Dive / squat (stop, start)"
 				(
-					spinner spDive "Deg per g" range:[-500, 500, 42] fieldwidth:56
-					spinner spStartTime "Start ease" range:[1, 120, 8] fieldwidth:56
-					spinner spPitchTime "Stop ease" range:[1, 120, 8] fieldwidth:56
-					spinner spMaxPitch "Max deg" range:[0, 90, 4] fieldwidth:56
+					spinner spDive "Deg per g" range:[-500, 500, 42] fieldwidth:64
+					spinner spStartTime "Start ease" range:[1, 120, 8] fieldwidth:64
+					spinner spPitchTime "Stop ease" range:[1, 120, 8] fieldwidth:64
+					spinner spMaxPitch "Max deg" range:[0, 90, 4] fieldwidth:64
 				)
 			)
 
 			rollout rWheels "Car Rig: wheels"
 			(
-				spinner spSpin "Tyre spin x" range:[-100, 100, 1] fieldwidth:56
-				spinner spSusp "Suspension" range:[0, 1, 1] fieldwidth:56
-				spinner spTravel "Travel" type:#worldunits range:[0, 1e6, 100] fieldwidth:56
-				spinner spRay "Ray height" type:#worldunits range:[0, 1e6, 200] fieldwidth:56
+				spinner spSpin "Tyre spin x" range:[-100, 100, 1] fieldwidth:64
+				spinner spSusp "Suspension" range:[0, 1, 1] fieldwidth:64
+				spinner spTravel "Travel" type:#worldunits range:[0, 1e6, 100] fieldwidth:64
+				spinner spRay "Ray height" type:#worldunits range:[0, 1e6, 200] fieldwidth:64
 			)
 
 			rollout rBody "Car Rig: body"
 			(
 				checkbox cbRealistic "Realistic motion"
-				spinner spFollow "Follow" range:[0, 1, 1] fieldwidth:56
-				spinner spLag "Lag frames" range:[0, 12, 3] fieldwidth:56
+				spinner spFollow "Follow" range:[0, 1, 1] fieldwidth:64
+				spinner spLag "Lag frames" range:[0, 12, 3] fieldwidth:64
 			)
 
 			rollout rCorner "Car Rig: corner slowdown"
 			(
 				checkbox cbCorner "Slow on corners"
-				spinner spCornerAmt "Amount" range:[0, 1, 0.5] fieldwidth:56
-				spinner spCornerRad "Tight radius" type:#worldunits range:[0, 1e9, 20000] fieldwidth:56
-				spinner spCornerBrake "Brake dist" type:#worldunits range:[0, 1e9, 15000] fieldwidth:56
+				spinner spCornerSpeed "Corner speed" range:[1, 500, 10] fieldwidth:64
+				label lblCornerUnit "(unit as in Drive panel)" align:#right
+				spinner spCornerRad "Tight radius" type:#worldunits range:[0, 1e9, 20000] fieldwidth:64
+				spinner spBrakeG "Braking g" range:[0.05, 2, 0.5] fieldwidth:64
 			)
 		)
 
-		local toolVersion = "0.10.1"
+		local toolVersion = "0.11.0"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -937,7 +964,6 @@ buttonText:"SCR"
 			ca.bank = bank
 			ca.rayUp = rayUp
 			ca.cornerRadius = units.decodeValue "20m"
-			ca.cornerBrake = units.decodeValue "15m"
 ca.metre = units.decodeValue "1m"
 			ca.pathHandle = path.handle
 			ca.wheelR = if picked.count > 0 then wheelRadius picked[1] else carSize * 0.06
@@ -1674,7 +1700,7 @@ ca.metre = units.decodeValue "1m"
 				else (
 					-- Keep every modifier setting: animated ones as a copy of their controller (keys included).
 					ca = rigParams root
-					names = #(#progress, #lookAhead, #steerMax, #bank, #rayUp, #spin, #suspension, #travel, #diveSquat, #bankTime, #pitchTime, #startTime, #bodyFollow, #bodyLag, #reverse, #realistic, #maxBank, #maxPitch, #cornerSlow, #cornerAmount, #cornerRadius, #cornerBrake, #easeOn, #easeStart, #easeStop, #speedSet, #speedUnit, #carType, #suspType, #lookType)
+					names = #(#progress, #lookAhead, #steerMax, #bank, #rayUp, #spin, #suspension, #travel, #diveSquat, #bankTime, #pitchTime, #startTime, #bodyFollow, #bodyLag, #reverse, #realistic, #maxBank, #maxPitch, #cornerSlow, #cornerSpeed, #cornerRadius, #brakeG, #easeOn, #easeStart, #easeStop, #speedSet, #speedUnit, #carType, #suspType, #lookType)
 					saved = #()
 					for n in names do (
 						c = try (getPropertyController ca (n as string)) catch (undefined)
