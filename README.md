@@ -23,7 +23,8 @@ That's it. The car now follows the spline from start to end over the active time
 | Body mode | Rays go down from the BOTTOM helper; the car sits on the hit point, tilted to the surface. |
 | Per-wheel mode | One ray under each of four wheels; the car is fitted to the plane through the four hits, which is steadier on bumpy ground. |
 | Front wheel steering | An orange `<car>_CarRig_Aim` null rides the spline Look ahead units in front. Both front wheels share one steering controller, so they always turn the same way, up to Max steer. |
-| Presets | On the Car Rig modifier: Car type (saloon, hatchback, sports car, supercar, muscle car, SUV, van, truck, buggy, classic), Suspension (soft, mid, hard) and Body look (V1 default, subtle, sporty, exaggerated, off). Every value can be changed after. |
+| Presets | In the Car Rig: presets panel: Car type (saloon, hatchback, sports car, supercar, muscle car, SUV, van, truck, buggy, classic), Suspension (soft, mid, hard) and Body look (V1 default, subtle, sporty, exaggerated, off). The chosen preset stays showing; every value can be changed after. |
+| Speed | Shows the car's speed now in km/h and mph from the scene units, measures the top speed, and Set run from speed re-times the Progress keys for a cruise speed you type in. |
 | Ease in / out | The car pulls away from rest and brakes to a stop over Start frames and Stop frames (40 each by default), still leaving and arriving on your Progress keys. The body squats and dips with it. |
 | Corner slowdown | Optional: the car spends longer in bends and makes it up on straights, braking before each bend; start and finish stay on your Progress keys. Amount, Tight radius and Brake dist on the modifier. |
 | Suspension | Each wheel follows the ground under it on a `_CarRig_Susp` helper, up to Travel (half a wheel radius by default). Suspension 0 to 1 on the modifier sets how much. Body and Per wheel modes. |

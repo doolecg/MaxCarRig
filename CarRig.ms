@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.9.6" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.10.0" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
@@ -176,7 +176,7 @@ buttonText:"SCR"
 	fn progFrames ca =
 	(
 		local c, n
-		c = try (ca[#progress].controller) catch (undefined)
+		c = try (getPropertyController ca #progress) catch (undefined)
 		n = if c == undefined then 0 else c.keys.count
 		if n >= 2 then (c.keys[n].time - c.keys[1].time).frame else (animationRange.end - animationRange.start).frame
 	)
@@ -493,40 +493,67 @@ buttonText:"SCR"
 )"
 
 		-- The controls on the rig's "Car Rig" modifier. All are animatable.
-		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4f9d)
+		-- The Car Rig modifier. Each parameter block has its own panel in the command panel, so the settings sit
+		-- in short folding panels instead of one long column. Scripts read values as rigCA.<name>; the tool
+		-- reaches animated values with getPropertyController, which works whichever block they are in.
+		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4fa0)
 		(
-			parameters main rollout:params
+			parameters pPresets rollout:rPresets
+			(
+				carType type:#integer ui:ddCarType default:1
+				suspType type:#integer ui:ddSusp default:1
+				lookType type:#integer ui:ddLook default:2
+			)
+			parameters main rollout:rDrive
 			(
 				progress type:#float ui:spProgress default:0.0
-				lookAhead type:#worldUnits ui:spAhead default:100.0
+				lookAhead type:#worldUnits ui:spAhead default:4000.0
 				steerMax type:#float ui:spSteer default:35.0
-				bank type:#float ui:spBank default:45.0
-				diveSquat type:#float ui:spDive default:42.0
-				maxBank type:#float ui:spMaxBank default:45.0
-				maxPitch type:#float ui:spMaxPitch default:4.0
-				bankTime type:#float ui:spBankTime default:60.0
-				pitchTime type:#float ui:spPitchTime default:8.0
-				startTime type:#float ui:spStartTime default:8.0
-				rayUp type:#worldUnits ui:spRay default:200.0
 				reverse type:#boolean ui:cbReverse default:false
+				easeOn type:#boolean ui:cbEase default:true
+				easeStart type:#float ui:spEaseStart default:40.0
+				easeStop type:#float ui:spEaseStop default:40.0
+				speedSet type:#float ui:spSpeedSet default:50.0
+				speedUnit type:#integer ui:ddUnit default:1
+				-- Set at build: one metre in scene units, and the spline, for the speed tools.
+				metre type:#float default:1000.0
+				pathHandle type:#integer default:0
+			)
+			parameters pBank rollout:rBank
+			(
+				bank type:#float ui:spBank default:70.0
+				bankTime type:#float ui:spBankTime default:60.0
+				maxBank type:#float ui:spMaxBank default:45.0
+				diveSquat type:#float ui:spDive default:42.0
+				startTime type:#float ui:spStartTime default:8.0
+				pitchTime type:#float ui:spPitchTime default:8.0
+				maxPitch type:#float ui:spMaxPitch default:4.0
+			)
+			parameters pWheels rollout:rWheels
+			(
 				spin type:#float ui:spSpin default:1.0
 				suspension type:#float ui:spSusp default:1.0
 				travel type:#worldUnits ui:spTravel default:100.0
+				rayUp type:#worldUnits ui:spRay default:200.0
+				-- The tyre radius, set at build; suspension presets set Travel as a share of it.
+				wheelR type:#worldUnits default:350.0
+			)
+			parameters pBody rollout:rBody
+			(
 				realistic type:#boolean ui:cbRealistic default:true
+				bodyFollow type:#float ui:spFollow default:1.0
+				bodyLag type:#float ui:spLag default:3.0
+			)
+			parameters pCorner rollout:rCorner
+			(
 				cornerSlow type:#boolean ui:cbCorner default:false
 				cornerAmount type:#float ui:spCornerAmt default:0.5
 				cornerRadius type:#worldUnits ui:spCornerRad default:20000.0
 				cornerBrake type:#worldUnits ui:spCornerBrake default:15000.0
-				-- The tyre radius, set at build; suspension presets set Travel as a share of it.
-				wheelR type:#worldUnits default:350.0
-				easeOn type:#boolean ui:cbEase default:true
-				easeStart type:#float ui:spEaseStart default:40.0
-				easeStop type:#float ui:spEaseStop default:40.0
-				bodyFollow type:#float ui:spFollow default:1.0
-				bodyLag type:#float ui:spLag default:3.0
 			)
-			-- Short labels in groups: the command panel is narrow and long labels get cut off.
-			rollout params "Car Rig"
+
+			-- Presets stay showing what was picked. Changing a value afterwards keeps the preset name shown.
+			rollout rPresets "Car Rig: presets"
 			(
 				-- Suspension feel. Values: suspension, travel (share of tyre radius), body follow, body lag,
 				-- bank ease, start ease, stop ease. Soft settles slowly and moves a lot; hard is quick and tight.
@@ -539,99 +566,186 @@ buttonText:"SCR"
 						2: #(1.0, 0.5, 0.8, 3.0, 25.0, 8.0, 6.0)
 						default: #(0.8, 0.25, 0.5, 2.0, 12.0, 5.0, 3.0)
 					)
-					suspension = p[1]
-					travel = wheelR * p[2]
-					bodyFollow = p[3]
-					bodyLag = p[4]
-					bankTime = p[5]
-					startTime = p[6]
-					pitchTime = p[7]
-					realistic = true
-				)
-				dropdownlist ddSusp "Suspension" items:#("Choose...", "Soft", "Mid", "Hard")
-				on ddSusp selected i do
-				(
-					if i > 1 do applySuspension (i - 1)
-					ddSusp.selection = 1
+					this.suspension = p[1]
+					this.travel = this.wheelR * p[2]
+					this.bodyFollow = p[3]
+					this.bodyLag = p[4]
+					this.bankTime = p[5]
+					this.startTime = p[6]
+					this.pitchTime = p[7]
+					this.realistic = true
 				)
 				-- How car types usually handle. Values: bank per g, max bank, dive per g, max dive, max steer,
 				-- suspension feel (1 soft, 2 mid, 3 hard), corner slowdown amount (0 = leave it as it is).
-				dropdownlist ddCarType "Car type" items:#("Choose...", "Saloon", "Hatchback", "Sports car", "Supercar", "Muscle car", "SUV / 4x4", "Van", "Truck / lorry", "Off-road buggy", "Classic car")
+				dropdownlist ddCarType "Car type" items:#("Custom", "Saloon", "Hatchback", "Sports car", "Supercar", "Muscle car", "SUV / 4x4", "Van", "Truck / lorry", "Off-road buggy", "Classic car")
+				dropdownlist ddSusp "Suspension" items:#("Custom", "Soft", "Mid", "Hard")
+				-- Body look: bank, bank ease, max bank, dive, start ease, stop ease, max dive, follow, lag,
+				-- realistic. V1 default is the studio's approved look.
+				dropdownlist ddLook "Body look" items:#("Custom", "V1 default", "Subtle", "Sporty", "Exaggerated", "Off (no body motion)")
+				on ddSusp selected i do if i > 1 do applySuspension (i - 1)
 				on ddCarType selected i do
 				(
 					local c
 					c = case i of
 					(
-						2: #(20.0, 12.0, 18.0, 4.0, 35.0, 2, 0.0)
-						3: #(18.0, 10.0, 15.0, 4.0, 38.0, 2, 0.0)
-						4: #(8.0, 6.0, 8.0, 2.5, 32.0, 3, 0.0)
-						5: #(5.0, 4.0, 6.0, 2.0, 30.0, 3, 0.0)
-						6: #(25.0, 14.0, 25.0, 6.0, 33.0, 1, 0.0)
-						7: #(30.0, 18.0, 25.0, 6.0, 36.0, 1, 0.0)
-						8: #(35.0, 20.0, 22.0, 5.0, 38.0, 1, 0.5)
-						9: #(40.0, 22.0, 15.0, 4.0, 40.0, 2, 0.7)
-						10: #(15.0, 12.0, 20.0, 6.0, 35.0, 1, 0.0)
-						11: #(35.0, 20.0, 30.0, 6.0, 38.0, 1, 0.0)
+						2: #(30.0, 15.0, 18.0, 4.0, 35.0, 2, 0.0)
+						3: #(28.0, 14.0, 15.0, 4.0, 38.0, 2, 0.0)
+						4: #(14.0, 8.0, 8.0, 2.5, 32.0, 3, 0.0)
+						5: #(9.0, 6.0, 6.0, 2.0, 30.0, 3, 0.0)
+						6: #(40.0, 18.0, 25.0, 6.0, 33.0, 1, 0.0)
+						7: #(50.0, 22.0, 25.0, 6.0, 36.0, 1, 0.0)
+						8: #(55.0, 25.0, 22.0, 5.0, 38.0, 1, 0.5)
+						9: #(60.0, 28.0, 15.0, 4.0, 40.0, 2, 0.7)
+						10: #(25.0, 16.0, 20.0, 6.0, 35.0, 1, 0.0)
+						11: #(55.0, 25.0, 30.0, 6.0, 38.0, 1, 0.0)
 						default: undefined
 					)
 					if c != undefined do
 					(
 						applySuspension c[6]
-						bank = c[1]
-						maxBank = c[2]
-						diveSquat = c[3]
-						maxPitch = c[4]
-						steerMax = c[5]
+						this.suspType = c[6] + 1
+						this.bank = c[1]
+						this.maxBank = c[2]
+						this.diveSquat = c[3]
+						this.maxPitch = c[4]
+						this.steerMax = c[5]
 						if c[7] > 0.0 do
 						(
-							cornerSlow = true
-							cornerAmount = c[7]
+							this.cornerSlow = true
+							this.cornerAmount = c[7]
 						)
 					)
-					ddCarType.selection = 1
 				)
-				-- Presets fill in Bank, Dive / squat and Body. Values: bank, bank ease, max bank, dive, start ease,
-				-- stop ease, max dive, follow, lag, realistic. V1 default is the studio's approved look.
-				dropdownlist ddPreset "Body look" items:#("Choose a preset...", "V1 default", "Subtle", "Sporty", "Exaggerated", "Off (no body motion)")
-				on ddPreset selected i do
+				on ddLook selected i do
 				(
 					local p = case i of
 					(
-						2: #(45.0, 60.0, 45.0, 42.0, 8.0, 8.0, 4.0, 1.0, 3.0, true)
-						3: #(4.0, 12.0, 6.0, 3.0, 10.0, 6.0, 3.0, 0.5, 4.0, true)
-						4: #(15.0, 20.0, 15.0, 10.0, 8.0, 5.0, 6.0, 0.8, 3.0, true)
-						5: #(80.0, 40.0, 60.0, 60.0, 6.0, 4.0, 15.0, 1.0, 2.0, true)
+						2: #(70.0, 60.0, 45.0, 42.0, 8.0, 8.0, 4.0, 1.0, 3.0, true)
+						3: #(6.0, 12.0, 8.0, 3.0, 10.0, 6.0, 3.0, 0.5, 4.0, true)
+						4: #(25.0, 20.0, 20.0, 10.0, 8.0, 5.0, 6.0, 0.8, 3.0, true)
+						5: #(120.0, 40.0, 70.0, 60.0, 6.0, 4.0, 15.0, 1.0, 2.0, true)
 						6: #(0.0, 10.0, 0.0, 0.0, 8.0, 8.0, 0.0, 0.0, 4.0, false)
 						default: undefined
 					)
 					if p != undefined do
 					(
-						bank = p[1]
-						bankTime = p[2]
-						maxBank = p[3]
-						diveSquat = p[4]
-						startTime = p[5]
-						pitchTime = p[6]
-						maxPitch = p[7]
-						bodyFollow = p[8]
-						bodyLag = p[9]
-						realistic = p[10]
+						this.bank = p[1]
+						this.bankTime = p[2]
+						this.maxBank = p[3]
+						this.diveSquat = p[4]
+						this.startTime = p[5]
+						this.pitchTime = p[6]
+						this.maxPitch = p[7]
+						this.bodyFollow = p[8]
+						this.bodyLag = p[9]
+						this.realistic = p[10]
 					)
-					ddPreset.selection = 1
 				)
-				group "Drive"
+			)
+
+			-- Drive and speed. The speed readout measures the rig's real motion (ease, corners and all) and turns
+			-- it into km/h and mph from the scene units. Set run from speed re-times the Progress keys so the car
+			-- cruises at that speed along this spline, allowing for the ease in and out.
+			rollout rDrive "Car Rig: drive and speed"
+			(
+				local readSpeed
+				fn rigNode =
 				(
-					spinner spProgress "Progress %" range:[-1e6, 1e6, 0] fieldwidth:56
-					spinner spAhead "Look ahead" type:#worldunits range:[0, 1e6, 100] fieldwidth:56
-					spinner spSteer "Max steer" range:[0, 89, 35] fieldwidth:56
-					checkbox cbReverse "Reverse along spline"
-					checkbox cbEase "Ease in / out (pull away, stop)"
-					spinner spEaseStart "Start frames" range:[0, 1000, 40] fieldwidth:56
-					spinner spEaseStop "Stop frames" range:[0, 1000, 40] fieldwidth:56
+					local m = custAttributes.getOwner this
+					if m == undefined then undefined else (for n in refs.dependentNodes m where isValidNode n collect n)[1]
 				)
+				fn speedAt n t =
+				(
+					local mps = (distance (at time (t + 1) n.pos) (at time (t - 1) n.pos)) / 2.0 * frameRate / (amax 0.0001 this.metre)
+					#(mps * 3.6, mps * 2.23694)
+				)
+				fn showSpeed =
+				(
+					local n = rigNode(), v
+					if n != undefined and readSpeed != undefined do
+					(
+						v = speedAt n sliderTime
+						readSpeed.text = "Speed now: " + (formattedPrint v[1] format:".0f") + " km/h  (" + (formattedPrint v[2] format:".0f") + " mph)"
+					)
+				)
+				spinner spProgress "Progress %" range:[-1e6, 1e6, 0] fieldwidth:56
+				spinner spAhead "Look ahead" type:#worldunits range:[0, 1e6, 4000] fieldwidth:56
+				spinner spSteer "Max steer" range:[0, 89, 35] fieldwidth:56
+				checkbox cbReverse "Reverse along spline"
+				checkbox cbEase "Ease in / out (pull away, stop)"
+				spinner spEaseStart "Start frames" range:[0, 1000, 40] fieldwidth:56
+				spinner spEaseStop "Stop frames" range:[0, 1000, 40] fieldwidth:56
+				group "Speed"
+				(
+					label lblSpeed "Speed now: -" align:#left
+					button btnTop "Measure top speed" width:130
+					label lblTop "" align:#left
+					spinner spSpeedSet "Cruise speed" range:[1, 1000, 50] fieldwidth:44
+					dropdownlist ddUnit "" items:#("km/h", "mph") width:60 align:#right
+					button btnSetSpeed "Set run from speed" width:130
+				)
+				on rDrive open do
+				(
+					readSpeed = lblSpeed
+					showSpeed()
+					registerTimeCallback showSpeed
+				)
+				on rDrive close do
+				(
+					unregisterTimeCallback showSpeed
+					readSpeed = undefined
+				)
+				on btnTop pressed do
+				(
+					local n = rigNode(), c, t0, t1, best = #(0.0, 0.0), v
+					if n != undefined do
+					(
+						c = getPropertyController this "progress"
+						t0 = if c != undefined and c.keys.count >= 2 then c.keys[1].time else animationRange.start
+						t1 = if c != undefined and c.keys.count >= 2 then c.keys[c.keys.count].time else animationRange.end
+						for t = t0 to t1 do
+						(
+							v = speedAt n t
+							if v[1] > best[1] do best = v
+						)
+						lblTop.text = "Top: " + (formattedPrint best[1] format:".0f") + " km/h  (" + (formattedPrint best[2] format:".0f") + " mph)"
+					)
+				)
+				on btnSetSpeed pressed do
+				(
+					local sp, len, mps, frames, c, t0, k
+					sp = maxOps.getNodeByHandle this.pathHandle
+					if not isValidNode sp then messageBox "The rig's spline is missing. Build the rig again." title:"Car Rig"
+					else
+					(
+						len = (curveLength sp 1) / (amax 0.0001 this.metre)
+						mps = if this.speedUnit == 2 then this.speedSet / 2.23694 else this.speedSet / 3.6
+						-- Cruise time, plus half of each ease (speeding up and slowing down average half speed).
+						frames = len / (amax 0.01 mps) * frameRate + (if this.easeOn then (this.easeStart + this.easeStop) / 2.0 else 0.0)
+						c = getPropertyController this "progress"
+						t0 = if c != undefined and c.keys.count >= 1 then c.keys[1].time else animationRange.start
+						undo "Set run from speed" on
+						(
+							if c != undefined do deleteKeys c #allKeys
+							with animate on
+							(
+								at time t0 this.progress = 0.0
+								at time (t0 + frames as time) this.progress = 100.0
+							)
+							c = getPropertyController this "progress"
+							if c != undefined do for k in c.keys do (k.inTangentType = #linear; k.outTangentType = #linear)
+							if t0 + frames as time > animationRange.end do animationRange = interval animationRange.start (t0 + frames as time)
+						)
+						showSpeed()
+					)
+				)
+			)
+
+			rollout rBank "Car Rig: bank and dive"
+			(
 				group "Bank (turns)"
 				(
-					spinner spBank "Deg per g" range:[-500, 500, 4] fieldwidth:56
+					spinner spBank "Deg per g" range:[-500, 500, 70] fieldwidth:56
 					spinner spBankTime "Ease frames" range:[1, 120, 60] fieldwidth:56
 					spinner spMaxBank "Max deg" range:[0, 90, 45] fieldwidth:56
 				)
@@ -642,30 +756,33 @@ buttonText:"SCR"
 					spinner spPitchTime "Stop ease" range:[1, 120, 8] fieldwidth:56
 					spinner spMaxPitch "Max deg" range:[0, 90, 4] fieldwidth:56
 				)
-				group "Wheels"
-				(
-					spinner spSpin "Tyre spin x" range:[-100, 100, 1] fieldwidth:56
-					spinner spSusp "Suspension" range:[0, 1, 1] fieldwidth:56
-					spinner spTravel "Travel" type:#worldunits range:[0, 1e6, 100] fieldwidth:56
-					spinner spRay "Ray height" type:#worldunits range:[0, 1e6, 200] fieldwidth:56
-				)
-				group "Corner slowdown"
-				(
-					checkbox cbCorner "Slow on corners"
-					spinner spCornerAmt "Amount" range:[0, 1, 0.5] fieldwidth:56
-					spinner spCornerRad "Tight radius" type:#worldunits range:[0, 1e9, 20000] fieldwidth:56
-					spinner spCornerBrake "Brake dist" type:#worldunits range:[0, 1e9, 15000] fieldwidth:56
-				)
-				group "Body"
-				(
-					checkbox cbRealistic "Realistic motion"
-					spinner spFollow "Follow" range:[0, 1, 1] fieldwidth:56
-					spinner spLag "Lag frames" range:[0, 12, 3] fieldwidth:56
-				)
+			)
+
+			rollout rWheels "Car Rig: wheels"
+			(
+				spinner spSpin "Tyre spin x" range:[-100, 100, 1] fieldwidth:56
+				spinner spSusp "Suspension" range:[0, 1, 1] fieldwidth:56
+				spinner spTravel "Travel" type:#worldunits range:[0, 1e6, 100] fieldwidth:56
+				spinner spRay "Ray height" type:#worldunits range:[0, 1e6, 200] fieldwidth:56
+			)
+
+			rollout rBody "Car Rig: body"
+			(
+				checkbox cbRealistic "Realistic motion"
+				spinner spFollow "Follow" range:[0, 1, 1] fieldwidth:56
+				spinner spLag "Lag frames" range:[0, 12, 3] fieldwidth:56
+			)
+
+			rollout rCorner "Car Rig: corner slowdown"
+			(
+				checkbox cbCorner "Slow on corners"
+				spinner spCornerAmt "Amount" range:[0, 1, 0.5] fieldwidth:56
+				spinner spCornerRad "Tight radius" type:#worldunits range:[0, 1e9, 20000] fieldwidth:56
+				spinner spCornerBrake "Brake dist" type:#worldunits range:[0, 1e9, 15000] fieldwidth:56
 			)
 		)
 
-		local toolVersion = "0.9.6"
+		local toolVersion = "0.10.0"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -764,9 +881,9 @@ buttonText:"SCR"
 
 		fn addSteerInputs ctrl path ca = (
 			ctrl.AddNode "sp" path
-			ctrl.AddTarget "progress" ca[#progress].controller
-			ctrl.AddTarget "ahead" ca[#lookAhead].controller
-			ctrl.AddTarget "steerMax" ca[#steerMax].controller
+			ctrl.AddTarget "progress" (getPropertyController ca "progress")
+			ctrl.AddTarget "ahead" (getPropertyController ca "lookAhead")
+			ctrl.AddTarget "steerMax" (getPropertyController ca "steerMax")
 			ctrl.AddObject "rigCA" ca
 		)
 
@@ -812,7 +929,7 @@ buttonText:"SCR"
 			addModifier root m
 			custAttributes.add m (paramsCA())
 			ca = custAttributes.get m 1
-			for p in #(#progress, #lookAhead, #steerMax, #bank, #rayUp, #spin, #suspension, #travel) do ca[p].controller = bezier_float()
+			for p in #(#progress, #lookAhead, #steerMax, #bank, #rayUp, #spin, #suspension, #travel) do setPropertyController ca (p as string) (bezier_float())
 			-- Wheels may move up or down by half a wheel radius by default.
 			ca.travel = if picked.count > 0 then wheelRadius picked[1] * 0.5 else carSize * 0.03
 			ca.lookAhead = lookAhead
@@ -821,13 +938,15 @@ buttonText:"SCR"
 			ca.rayUp = rayUp
 			ca.cornerRadius = units.decodeValue "20m"
 			ca.cornerBrake = units.decodeValue "15m"
+ca.metre = units.decodeValue "1m"
+			ca.pathHandle = path.handle
 			ca.wheelR = if picked.count > 0 then wheelRadius picked[1] else carSize * 0.06
 			-- Progress runs 0 to 100 over the active time range on linear keys, so the speed is constant.
 			with animate on (
 				at time animationRange.start ca.progress = 0.0
 				at time animationRange.end ca.progress = 100.0
 			)
-			for k in ca[#progress].controller.keys do (
+			for k in (getPropertyController ca "progress").keys do (
 				k.inTangentType = #linear
 				k.outTangentType = #linear
 			)
@@ -840,8 +959,8 @@ buttonText:"SCR"
 				ac = position_script()
 				aim.position.controller = ac
 				ac.AddNode "sp" path
-				ac.AddTarget "progress" ca[#progress].controller
-				ac.AddTarget "ahead" ca[#lookAhead].controller
+				ac.AddTarget "progress" (getPropertyController ca "progress")
+				ac.AddTarget "ahead" (getPropertyController ca "lookAhead")
 				ac.AddObject "rigCA" ca
 				ac.script = substituteString aimScript "%LEN%" lenText
 				setUserProp root "MaxCarRig_aim" aim.handle
@@ -864,9 +983,9 @@ buttonText:"SCR"
 				bankRest = bankH.position.controller.value
 				bc = transform_script()
 				addSteerInputs bc path ca
-				bc.AddTarget "bank" ca[#bank].controller
+				bc.AddTarget "bank" (getPropertyController ca "bank")
 				bc.AddNode "rig" root
-				bc.AddObject "progCtrl" ca[#progress].controller
+				bc.AddObject "progCtrl" (getPropertyController ca "progress")
 				bc.script = substituteString (substituteString bankScript "%METRE%" ((units.decodeValue "1m") as string)) "%REST%" (bankRest as string)
 				bankH.transform.controller = bc
 
@@ -902,9 +1021,9 @@ buttonText:"SCR"
 					psc = position_script()
 					psc.AddNode "rig" root
 					for g = 1 to grounds.count do psc.AddNode ("g" + g as string) grounds[g]
-					psc.AddTarget "rayUp" ca[#rayUp].controller
-					psc.AddTarget "suspension" ca[#suspension].controller
-					psc.AddTarget "travel" ca[#travel].controller
+					psc.AddTarget "rayUp" (getPropertyController ca "rayUp")
+					psc.AddTarget "suspension" (getPropertyController ca "suspension")
+					psc.AddTarget "travel" (getPropertyController ca "travel")
 					s = substituteString suspScript "%RAYFNS%" rayFns
 					s = substituteString s "%GROUNDS%" (listText (for g = 1 to grounds.count collect ("g" + g as string)))
 					s = substituteString s "%REST%" (rest as string)
@@ -916,8 +1035,8 @@ buttonText:"SCR"
 					baseRot = (spinH.rotation.controller.value) as matrix3
 					spc = rotation_script()
 					spc.AddNode "sp" path
-					spc.AddTarget "progress" ca[#progress].controller
-					spc.AddTarget "spin" ca[#spin].controller
+					spc.AddTarget "progress" (getPropertyController ca "progress")
+					spc.AddTarget "spin" (getPropertyController ca "spin")
 					spc.AddObject "rigCA" ca
 					s = substituteString spinScript "%RADIUS%" ((amax 0.001 (wheelRadius wheels[i])) as string)
 					s = substituteString s "%AXIS%" axisNames[axisK]
@@ -948,8 +1067,8 @@ buttonText:"SCR"
 			ctrl = transform_script()
 			root.transform.controller = ctrl
 			ctrl.AddNode "sp" path
-			ctrl.AddTarget "progress" ca[#progress].controller
-			ctrl.AddTarget "rayUp" ca[#rayUp].controller
+			ctrl.AddTarget "progress" (getPropertyController ca "progress")
+			ctrl.AddTarget "rayUp" (getPropertyController ca "rayUp")
 			ctrl.AddObject "rigCA" ca
 			for i = 1 to grounds.count do ctrl.AddNode ("g" + i as string) grounds[i]
 			ctrl.script = s
@@ -1046,7 +1165,7 @@ buttonText:"SCR"
 		(
 			spinner spAhead "Look ahead" range:[0, 1e6, 100] type:#worldunits across:3
 			spinner spSteer "Max steer (deg)" range:[0, 89, 35]
-			spinner spBank "Bank (deg per g)" range:[-500, 500, 45]
+			spinner spBank "Bank (deg per g)" range:[-500, 500, 70]
 		)
 		checkbox cbRigLayer "Put the rig and car on their own layer (untick to leave them where they are)" checked:true
 		button btnBuild "Build rig" width:165 height:28 across:3
@@ -1555,10 +1674,10 @@ buttonText:"SCR"
 				else (
 					-- Keep every modifier setting: animated ones as a copy of their controller (keys included).
 					ca = rigParams root
-					names = #(#progress, #lookAhead, #steerMax, #bank, #rayUp, #spin, #suspension, #travel, #diveSquat, #bankTime, #pitchTime, #startTime, #bodyFollow, #bodyLag, #reverse, #realistic, #maxBank, #maxPitch, #cornerSlow, #cornerAmount, #cornerRadius, #cornerBrake, #easeOn, #easeStart, #easeStop)
+					names = #(#progress, #lookAhead, #steerMax, #bank, #rayUp, #spin, #suspension, #travel, #diveSquat, #bankTime, #pitchTime, #startTime, #bodyFollow, #bodyLag, #reverse, #realistic, #maxBank, #maxPitch, #cornerSlow, #cornerAmount, #cornerRadius, #cornerBrake, #easeOn, #easeStart, #easeStop, #speedSet, #speedUnit, #carType, #suspType, #lookType)
 					saved = #()
 					for n in names do (
-						c = try (ca[n].controller) catch (undefined)
+						c = try (getPropertyController ca (n as string)) catch (undefined)
 						v = try (getProperty ca n) catch (undefined)
 						append saved #(n, (if c != undefined then copy c else undefined), v)
 					)
@@ -1572,7 +1691,7 @@ buttonText:"SCR"
 							newRoot = buildRig cars path grounds bottom fwdIndex mode spRay.value wheels usePivot spAhead.value spSteer.value spBank.value
 							newCa = rigParams newRoot
 							for e in saved where e[3] != undefined do (
-								if e[2] != undefined then (try (newCa[e[1]].controller = e[2]) catch ())
+								if e[2] != undefined then (try (setPropertyController newCa (e[1] as string) e[2]) catch ())
 								else (try (setProperty newCa e[1] e[3]) catch ())
 							)
 							if useLayer do moveToRigLayer newRoot
