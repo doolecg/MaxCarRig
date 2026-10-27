@@ -497,6 +497,7 @@ buttonText:"SCR"
 
 		dotNetControl lblBrand "System.Windows.Forms.Label" width:234 height:20
 		dotNetControl lblTitle "System.Windows.Forms.Label" width:234 height:30 offset:[0,-5]
+		button btnGuide "Setup guide" width:230
 		group "Car"
 		(
 		button btnAuto "Auto detect by name" width:230
@@ -604,6 +605,24 @@ buttonText:"SCR"
 			for n in objects where hit == undefined and findItem tags (tagOf n) != 0 do hit = n
 			hit
 		)
+
+		on btnGuide pressed do messageBox ( \
+			"1. Name your parts:\n" + \
+			"    BODY = the car body (a group is fine)\n" + \
+			"    FRONT_LEFT, FRONT_RIGHT, BACK_LEFT, BACK_RIGHT = the wheels\n" + \
+			"    CAR PATH = the spline to drive along\n" + \
+			"    CAR SURFACE = the road or ground\n\n" + \
+			"2. Put each wheel's pivot in its centre:\n" + \
+			"    Hierarchy > Affect Pivot Only > Center to Object.\n\n" + \
+			"3. Press Auto detect by name. Check what it found.\n\n" + \
+			"4. Pick a mode. Per wheel follows bumps best.\n\n" + \
+			"5. Press Build rig.\n\n" + \
+			"6. Select the rig rectangle. The Car Rig modifier sets\n" + \
+			"    Progress, Look ahead, Max steer, Bank, Tyre spin and Reverse.\n\n" + \
+			"7. For smooth playback, press Bake selected rig to keys.\n" + \
+			"    Esc cancels. Build again to change the rig after baking.\n\n" + \
+			"8. To take the rig off, select it and press Remove selected rig.\n\n" + \
+			"Something wrong? Press Open log and send the log.") title:("V1 Simple Car Rig " + toolVersion + " - Setup guide")
 
 		on btnAuto pressed do (
 			local body, w, surf, found = #(), missing = #(), i
