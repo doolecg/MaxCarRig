@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.9.5" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.9.6" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
@@ -150,9 +150,43 @@ buttonText:"SCR"
 			base + (tab[2][lo] + (tab[2][hi] - tab[2][lo]) * a) / tab[3]
 		)
 	)
-	-- Travelled fraction (0 to 1) for a Progress fraction, with corner slowdown when it is on.
-	fn travelQ sp q rev useIt amt radius brake =
-		if rev then 1.0 - (warpQ sp (1.0 - q) useIt amt radius brake) else warpQ sp q useIt amt radius brake
+	-- Ease in / out: the car speeds up from rest over the first part of the run and slows to rest over the
+	-- last (a and b are those parts as shares of the run). Speed rises and falls in a straight line, so the
+	-- car brakes evenly into the stop; the middle runs a little faster so start and finish stay on the keys.
+	fn rampQ q a b =
+	(
+		local k, v, r
+		if q <= 0.0 or q >= 1.0 then q
+		else
+		(
+			a = amax 0.0 a
+			b = amax 0.0 b
+			if a + b > 1.0 do
+			(
+				k = 1.0 / (a + b)
+				a = a * k
+				b = b * k
+			)
+			v = 1.0 / (1.0 - a / 2.0 - b / 2.0)
+			r = if q < a then v * q * q / (2.0 * a) else if q <= 1.0 - b then v * (a / 2.0 + (q - a)) else 1.0 - v * (1.0 - q) * (1.0 - q) / (2.0 * b)
+			r
+		)
+	)
+	-- Length of the run in frames: from the first to the last Progress key.
+	fn progFrames ca =
+	(
+		local c, n
+		c = try (ca[#progress].controller) catch (undefined)
+		n = if c == undefined then 0 else c.keys.count
+		if n >= 2 then (c.keys[n].time - c.keys[1].time).frame else (animationRange.end - animationRange.start).frame
+	)
+	-- Travelled fraction (0 to 1) for a Progress fraction, with ease in / out and corner slowdown when on.
+	fn travelQ sp q rev useIt amt radius brake easeOn e0 e1 total =
+	(
+		local qq = q
+		if easeOn and total > 0.0 do qq = rampQ q (e0 / total) (e1 / total)
+		if rev then 1.0 - (warpQ sp (1.0 - qq) useIt amt radius brake) else warpQ sp qq useIt amt radius brake
+	)
 	fn splineAt sp f =
 	(
 		local tab, pts, lens, target, lo, hi, mid, a
@@ -238,7 +272,7 @@ buttonText:"SCR"
 		local y = normalize (cross z x)
 		matrix3 (cross y z) y z pos
 	)
-	u = travelQ sp (progress / 100.0) rigCA.reverse rigCA.cornerSlow rigCA.cornerAmount rigCA.cornerRadius rigCA.cornerBrake
+	u = travelQ sp (progress / 100.0) rigCA.reverse rigCA.cornerSlow rigCA.cornerAmount rigCA.cornerRadius rigCA.cornerBrake rigCA.easeOn rigCA.easeStart rigCA.easeStop (progFrames rigCA)
 	if rigCA.reverse do u = 1.0 - u
 	u = if isClosed sp 1 then (mod ((mod u 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 u))
 	sa = splineAt sp u
@@ -290,7 +324,7 @@ buttonText:"SCR"
 	%SPLINEFNS%
 	local len = (splineTable sp)[3]
 	local a = if len < 0.001 then 0.0 else ahead / len
-	local u = (travelQ sp (progress / 100.0) rigCA.reverse rigCA.cornerSlow rigCA.cornerAmount rigCA.cornerRadius rigCA.cornerBrake)
+	local u = (travelQ sp (progress / 100.0) rigCA.reverse rigCA.cornerSlow rigCA.cornerAmount rigCA.cornerRadius rigCA.cornerBrake rigCA.easeOn rigCA.easeStart rigCA.easeStop (progFrames rigCA))
 	u = if rigCA.reverse then 1.0 - u - a else u + a
 	u = if isClosed sp 1 then (mod ((mod u 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 u))
 	(splineAt sp u)[1]
@@ -306,7 +340,7 @@ buttonText:"SCR"
 	fn wrapU sp x = if isClosed sp 1 then (mod ((mod x 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 x))
 	len = (splineTable sp)[3]
 	s = if rigCA.reverse then -1.0 else 1.0
-	u = travelQ sp (progress / 100.0) rigCA.reverse rigCA.cornerSlow rigCA.cornerAmount rigCA.cornerRadius rigCA.cornerBrake
+	u = travelQ sp (progress / 100.0) rigCA.reverse rigCA.cornerSlow rigCA.cornerAmount rigCA.cornerRadius rigCA.cornerBrake rigCA.easeOn rigCA.easeStart rigCA.easeStop (progFrames rigCA)
 	if rigCA.reverse do u = 1.0 - u
 	uf = wrapU sp (u + s * %FRONTDIST% / len)
 	ua = wrapU sp (u + s * ahead / len)
@@ -344,7 +378,7 @@ buttonText:"SCR"
 	nS = (amin 30 (ceil (2.0 * sigS))) as integer
 	nMax = amax nB (amax nP nS)
 	-- prog[k + nMax + 2] is the travelled fraction at frame F + k
-	for k = -(nMax + 1) to nMax + 1 do append prog (travelQ sp ((at time ((F + k) as time) progCtrl.value) / 100.0) rigCA.reverse rigCA.cornerSlow rigCA.cornerAmount rigCA.cornerRadius rigCA.cornerBrake)
+	for k = -(nMax + 1) to nMax + 1 do append prog (travelQ sp ((at time ((F + k) as time) progCtrl.value) / 100.0) rigCA.reverse rigCA.cornerSlow rigCA.cornerAmount rigCA.cornerRadius rigCA.cornerBrake rigCA.easeOn rigCA.easeStart rigCA.easeStop (progFrames rigCA))
 	-- bends are measured over 1 m either side
 	delta = metre / len
 	for k = -nMax to nMax do
@@ -398,7 +432,7 @@ buttonText:"SCR"
 		(
 			tk = (F - i) as time
 			j = at time tk rig.transform
-			uk = travelQ sp ((at time tk progCtrl.value) / 100.0) rigCA.reverse rigCA.cornerSlow rigCA.cornerAmount rigCA.cornerRadius rigCA.cornerBrake
+			uk = travelQ sp ((at time tk progCtrl.value) / 100.0) rigCA.reverse rigCA.cornerSlow rigCA.cornerAmount rigCA.cornerRadius rigCA.cornerBrake rigCA.easeOn rigCA.easeStart rigCA.easeStop (progFrames rigCA)
 			if rigCA.reverse do uk = 1.0 - uk
 			pk = (splineAt sp (wrapU sp uk))[1]
 			w = exp (-(i as float) / rigCA.bodyLag)
@@ -454,12 +488,12 @@ buttonText:"SCR"
 		-- that points across the car (%AXIS%), so a wheel spins about its own axle.
 		local spinScript = @"(
 	%SPLINEFNS%
-	local dist = (travelQ sp (progress / 100.0) rigCA.reverse rigCA.cornerSlow rigCA.cornerAmount rigCA.cornerRadius rigCA.cornerBrake) * (splineTable sp)[3]
+	local dist = (travelQ sp (progress / 100.0) rigCA.reverse rigCA.cornerSlow rigCA.cornerAmount rigCA.cornerRadius rigCA.cornerBrake rigCA.easeOn rigCA.easeStart rigCA.easeStop (progFrames rigCA)) * (splineTable sp)[3]
 	((%AXIS% (%SIGN% * spin * dist / %RADIUS% * 180.0 / pi)) * %BASE%) as quat
 )"
 
 		-- The controls on the rig's "Car Rig" modifier. All are animatable.
-		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4f9c)
+		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4f9d)
 		(
 			parameters main rollout:params
 			(
@@ -485,6 +519,9 @@ buttonText:"SCR"
 				cornerBrake type:#worldUnits ui:spCornerBrake default:15000.0
 				-- The tyre radius, set at build; suspension presets set Travel as a share of it.
 				wheelR type:#worldUnits default:350.0
+				easeOn type:#boolean ui:cbEase default:true
+				easeStart type:#float ui:spEaseStart default:40.0
+				easeStop type:#float ui:spEaseStop default:40.0
 				bodyFollow type:#float ui:spFollow default:1.0
 				bodyLag type:#float ui:spLag default:3.0
 			)
@@ -588,6 +625,9 @@ buttonText:"SCR"
 					spinner spAhead "Look ahead" type:#worldunits range:[0, 1e6, 100] fieldwidth:56
 					spinner spSteer "Max steer" range:[0, 89, 35] fieldwidth:56
 					checkbox cbReverse "Reverse along spline"
+					checkbox cbEase "Ease in / out (pull away, stop)"
+					spinner spEaseStart "Start frames" range:[0, 1000, 40] fieldwidth:56
+					spinner spEaseStop "Stop frames" range:[0, 1000, 40] fieldwidth:56
 				)
 				group "Bank (turns)"
 				(
@@ -625,7 +665,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.9.5"
+		local toolVersion = "0.9.6"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -1515,7 +1555,7 @@ buttonText:"SCR"
 				else (
 					-- Keep every modifier setting: animated ones as a copy of their controller (keys included).
 					ca = rigParams root
-					names = #(#progress, #lookAhead, #steerMax, #bank, #rayUp, #spin, #suspension, #travel, #diveSquat, #bankTime, #pitchTime, #startTime, #bodyFollow, #bodyLag, #reverse, #realistic, #maxBank, #maxPitch, #cornerSlow, #cornerAmount, #cornerRadius, #cornerBrake)
+					names = #(#progress, #lookAhead, #steerMax, #bank, #rayUp, #spin, #suspension, #travel, #diveSquat, #bankTime, #pitchTime, #startTime, #bodyFollow, #bodyLag, #reverse, #realistic, #maxBank, #maxPitch, #cornerSlow, #cornerAmount, #cornerRadius, #cornerBrake, #easeOn, #easeStart, #easeStop)
 					saved = #()
 					for n in names do (
 						c = try (ca[n].controller) catch (undefined)
