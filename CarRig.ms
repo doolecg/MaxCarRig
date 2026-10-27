@@ -152,9 +152,11 @@ buttonText:"SCR"
 
 		-- Tyre spin (Rotation Script, one per wheel): distance travelled / radius, so the tyre rolls
 		-- without sliding. spin scales it: 1 = rolling, 0 = stopped, more = wheelspin.
+		-- The helper carries the wheel pivot's own orientation (%BASE%) and spins about the pivot axis
+		-- that points across the car (%AXIS%), so a wheel spins about its own axle.
 		local spinScript = @"(
 	local dist = progress / 100.0 * (curveLength sp 1)
-	(eulerAngles 0 (spin * dist / %RADIUS% * 180.0 / pi) 0) as quat
+	((%AXIS% (%SIGN% * spin * dist / %RADIUS% * 180.0 / pi)) * %BASE%) as quat
 )"
 
 		-- The controls on the rig's "Car Rig" modifier. All are animatable.
@@ -291,8 +293,8 @@ buttonText:"SCR"
 		-- declared inside if/else blocks and then read in a for-loop.
 		fn buildRig cars path grounds bottom fwdIndex mode rayUp wheels usePivot lookAhead steerMax bank = (
 			local picked, base, tm, inv, bb, carLen, carWid, carSize, wheelSize, root, m, ca, offs
-			local aim, ac, fl, fr, steering, front, axleZ, bankTm, bankH, bc, sc, st, sh, wheelParts, bodyNodes, c, s, ctrl, spinH, spc, wheelHolder
-			local steerHs = #(undefined, undefined), corners = #("FL", "FR", "RL", "RR")
+			local aim, ac, fl, fr, steering, front, axleZ, bankTm, bankH, bc, sc, st, sh, wheelParts, bodyNodes, c, s, ctrl, spinH, spc, wheelHolder, wt, axisK, axisSign, baseRot
+			local steerHs = #(undefined, undefined), corners = #("FL", "FR", "RL", "RR"), axisNames = #("rotateXMatrix", "rotateYMatrix", "rotateZMatrix")
 
 			picked = for w in wheels where w != undefined collect w
 			base = (topLevel cars)[1].name
@@ -388,15 +390,23 @@ buttonText:"SCR"
 				-- Each wheel hangs from a spin helper at its centre, under its steer helper (front) or the root.
 				for i = 1 to 4 where isValidNode wheels[i] do (
 					wheelHolder = if i <= 2 and steering then steerHs[i] else root
-					st = copy tm
-					st.row4 = wheelCentre wheels[i] usePivot
+					-- Start from the wheel pivot rotation (scale removed) so the spin axis is the wheel own axle.
+					wt = wheels[i].transform
+					st = matrix3 (normalize wt.row1) (normalize wt.row2) (normalize wt.row3) (wheelCentre wheels[i] usePivot)
+					axisK = 1
+					for k = 2 to 3 do if abs (dot st[k] tm.row2) > abs (dot st[axisK] tm.row2) do axisK = k
+					axisSign = if (dot st[axisK] tm.row2) < 0 then -1 else 1
 					spinH = rigHelper (base + "_CarRig_Spin" + corners[i]) st (wheelSize * 1.1) (color 225 214 198) false
 					spinH.parent = wheelHolder
+					baseRot = (spinH.rotation.controller.value) as matrix3
 					spc = rotation_script()
 					spc.AddNode "sp" path
 					spc.AddTarget "progress" ca[#progress].controller
 					spc.AddTarget "spin" ca[#spin].controller
-					spc.script = substituteString spinScript "%RADIUS%" ((amax 0.001 (wheelRadius wheels[i])) as string)
+					s = substituteString spinScript "%RADIUS%" ((amax 0.001 (wheelRadius wheels[i])) as string)
+					s = substituteString s "%AXIS%" axisNames[axisK]
+					s = substituteString s "%SIGN%" (axisSign as string)
+					spc.script = substituteString s "%BASE%" ("(" + baseRot as string + ")")
 					spinH.rotation.controller = spc
 					linkTo wheels[i] spinH
 					-- Brakes and callipers steer with the wheel but must not spin with it.
@@ -484,7 +494,7 @@ buttonText:"SCR"
 		)
 		group "Wheels (front pair steers)"
 		(
-			dropdownlist ddCentre "Wheel centre" items:#("Tyre centre", "Pivot point")
+			dropdownlist ddCentre "Wheel centre" items:#("Pivot point", "Tyre centre")
 			pickbutton pbFL "Front left wheel" autoDisplay:true width:230
 			pickbutton pbFR "Front right wheel" autoDisplay:true width:230
 			pickbutton pbRL "Rear left wheel" autoDisplay:true width:230
@@ -717,7 +727,7 @@ buttonText:"SCR"
 				undo "Build car rig" on (
 					try (
 						local root = buildRig carNodes pathShape grounds bottomNode fwdUse mode spRay.value \
-							wheels (ddCentre.selection == 2) spAhead.value spSteer.value spBank.value
+							wheels (ddCentre.selection == 1) spAhead.value spSteer.value spBank.value
 						select root
 						logLine ("  built: " + root.name + ", children: " + names (withDescendants #(root)))
 					)
