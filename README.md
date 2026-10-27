@@ -28,7 +28,7 @@ That's it. The car now follows the spline from start to end over the active time
 | Rig layer | Build puts the rig and car on a layer named after the rig (untick to leave them); Remove puts everything back on its old layer. |
 | Tyre spin | Each picked wheel rolls by distance travelled / its radius, on a yellow `_CarRig_Spin` helper at the wheel centre. Tyre spin x on the modifier scales it (0 stops, above 1 gives wheelspin). |
 | Front from wheels | With both front wheels picked, the rig works out which way the car faces from the wheels; the dropdown is only used without them. |
-| Bank | The body rolls with the steer angle on a `_CarRig_Bank` helper at axle height. Positive Bank leans out of the turn, negative leans in. |
+| Bank and dive / squat | The body leans out of turns and the nose lifts when speeding up and dips when braking, from the car's real motion along the spline. Bank and Dive / squat (degrees per g) on the modifier. |
 | Wheel centre | Steering and wheel contacts use each wheel's pivot point or its bounding box centre, your choice. |
 | Include or exclude ground | Include: only listed objects are ground. Exclude: every visible geometry object except the list and the car (a snapshot taken at Build). |
 | Auto size | Rig helpers are sized from the car and wheel size. |

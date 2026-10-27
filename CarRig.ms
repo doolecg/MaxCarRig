@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.6.1" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.7.0" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
@@ -25,22 +25,38 @@ buttonText:"SCR"
 		-- Spline lookup functions shared by the rig scripts (pasted in when the tool opens).
 		local splineFns = @"-- Spline lookups from a table: the spline is sampled once into points with running lengths and kept in
 	-- a global. lengthInterp re-measures the whole spline on every call (about 100 ms on a long road), and
-	-- the rig asked several times a frame. The table is rebuilt when the spline moves or its knot count changes.
-	global MaxCarRig_splines2
+	-- the rig asked several times a frame. The table is rebuilt when the spline moves, its knot count changes,
+	-- or its shape changes: a sum of its knots and handles is re-checked at most every 0.2 seconds.
+	global MaxCarRig_splines3
+	fn splinePrint sp =
+	(
+		local fp = [0,0,0], i
+		try (for i = 1 to numKnots sp 1 do fp += (getKnotPoint sp 1 i) + 0.5 * (getInVec sp 1 i) + 0.25 * (getOutVec sp 1 i)) catch ()
+		fp
+	)
 	fn splineTable sp =
 	(
-		local tab, key1, key2, e, pts, lens, tans, ns, i, j, total, steps = 24
-		if MaxCarRig_splines2 == undefined do MaxCarRig_splines2 = #()
+		local tab, key1, key2, e, pts, lens, tans, ns, i, j, total, steps = 24, fp
+		if MaxCarRig_splines3 == undefined do MaxCarRig_splines3 = #()
 		key1 = sp.transform as string
 		key2 = numKnots sp 1
-		for i = MaxCarRig_splines2.count to 1 by -1 do
+		for i = MaxCarRig_splines3.count to 1 by -1 do
 		(
-			e = MaxCarRig_splines2[i]
-			if not isValidNode e[1] then deleteItem MaxCarRig_splines2 i
+			e = MaxCarRig_splines3[i]
+			if not isValidNode e[1] then deleteItem MaxCarRig_splines3 i
 			else if e[1] == sp do
 			(
-				if e[2] == key1 and e[3] == key2 then tab = e[4]
-				else deleteItem MaxCarRig_splines2 i
+				if e[2] == key1 and e[3] == key2 then
+				(
+					if abs (timeStamp() - e[5]) < 200 then tab = e[4]
+					else
+					(
+						fp = splinePrint sp
+						if distance fp e[6] < 0.0001 then (e[5] = timeStamp(); tab = e[4])
+						else deleteItem MaxCarRig_splines3 i
+					)
+				)
+				else deleteItem MaxCarRig_splines3 i
 			)
 		)
 		if tab == undefined do
@@ -61,7 +77,7 @@ buttonText:"SCR"
 			-- so the car turns smoothly instead of snapping at each sample.
 			tans = for i = 1 to pts.count collect normalize (pts[amin pts.count (i + 1)] - pts[amax 1 (i - 1)])
 			tab = #(pts, lens, amax 0.001 total, tans)
-			append MaxCarRig_splines2 #(sp, key1, key2, tab)
+			append MaxCarRig_splines3 #(sp, key1, key2, tab, timeStamp(), splinePrint sp)
 		)
 		tab
 	)
@@ -224,60 +240,69 @@ buttonText:"SCR"
 	(eulerAngles 0 0 (amax (-steerMax) (amin steerMax ang))) as quat
 )"
 
-		-- Body (Transform Script, parent-relative): roll from the steer angle (positive Bank leans out of the
-		-- turn), plus realistic body motion: the body follows the rig's rise, pitch and roll a few frames late.
-		-- The lag is a weighted average of the last frames (weights fall off over Body lag frames), so it is the
-		-- same every time you scrub or render. Body follow scales how much of it the body takes.
+		-- Body (Transform Script, parent-relative). Banking and dive/squat come from the car's real motion:
+		-- the rig's position one frame either side gives its acceleration. Sideways acceleration rolls the
+		-- body out of the turn (Bank, degrees per g); forward acceleration lifts the nose and braking dips it
+		-- (Dive / squat, degrees per g). With Realistic body motion on, these and the ground's rise, pitch and
+		-- roll are averaged over the last frames (Body lag), so the body settles a little late, like springs.
+		-- It is the same every time you scrub or render.
 		local bankScript = @"(
-	local len, u, s, uf, ua, t, v, ang, k
 	%SPLINEFNS%
 	local rest = %REST%
-	local dh = 0.0, dp = 0.0, dr = 0.0, n, i, w, wsum, tk, m, uk, pk, hh, pp, rr, h0, p0, r0, out
+	local metre = %METRE%
+	local dh = 0.0, dp = 0.0, dr = 0.0, n, i, j, w, wsum, tk, uk, pk, hh, pp, rr, h0, p0, r0, out
+	local mats = #(), now, acc, toG, ax = 0.0, ay = 0.0, axw = 0.0, ayw = 0.0, realistic, roll, pitch
 	fn wrapU sp x = if isClosed sp 1 then (mod ((mod x 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 x))
-	len = (splineTable sp)[3]
-	s = if rigCA.reverse then -1.0 else 1.0
-	u = progress / 100.0
-	if rigCA.reverse do u = 1.0 - u
-	uf = wrapU sp (u + s * %FRONTDIST% / len)
-	ua = wrapU sp (u + s * ahead / len)
-	t = s * (splineAt sp (wrapU sp u))[2]
-	v = (splineAt sp ua)[1] - (splineAt sp uf)[1]
-	t.z = 0.0
-	v.z = 0.0
-	ang = if (length v) < 0.001 or (length t) < 0.001 then 0.0 else atan2 ((cross t v).z) (dot t v)
-	k = if steerMax < 0.001 then 0.0 else amax (-1.0) (amin 1.0 (ang / steerMax))
-	if rigCA.realistic and rigCA.bodyFollow > 0.0 and rigCA.bodyLag > 0.0 do
+	realistic = rigCA.realistic and rigCA.bodyLag > 0.0
+	n = if realistic then ((amin 12 (ceil (rigCA.bodyLag * 2.0))) as integer) else 0
+	-- mats[j] is the rig at frame F + 2 - j: one frame ahead, now, then back over the lag window.
+	for j = 1 to n + 3 do append mats (at time ((F + 2 - j) as time) rig.transform)
+	now = mats[2]
+	-- units per frame squared to g
+	toG = frameRate * frameRate / (metre * 9.81)
+	wsum = 0.0
+	hh = 0.0
+	pp = 0.0
+	rr = 0.0
+	for i = 0 to n do
 	(
-		n = (amin 12 (ceil (rigCA.bodyLag * 2.0))) as integer
-		wsum = 0.0
-		hh = 0.0
-		pp = 0.0
-		rr = 0.0
-		for i = 0 to n do
+		j = i + 2
+		w = if realistic then exp (-(i as float) / rigCA.bodyLag) else 1.0
+		acc = (mats[j - 1].row4 - 2.0 * mats[j].row4 + mats[j + 1].row4) * toG
+		axw += w * (dot acc (normalize now.row1))
+		ayw += w * (dot acc (normalize now.row2))
+		if realistic do
 		(
 			tk = (F - i) as time
-			m = at time tk rig.transform
 			uk = (at time tk progCtrl.value) / 100.0
 			if rigCA.reverse do uk = 1.0 - uk
 			pk = (splineAt sp (wrapU sp uk))[1]
-			w = exp (-(i as float) / rigCA.bodyLag)
-			hh += w * (m.row4.z - pk.z)
-			pp += w * (asin (amax (-1.0) (amin 1.0 (normalize m.row1).z)))
-			rr += w * (asin (amax (-1.0) (amin 1.0 (normalize m.row2).z)))
-			wsum += w
+			hh += w * (mats[j].row4.z - pk.z)
+			pp += w * (asin (amax (-1.0) (amin 1.0 (normalize mats[j].row1).z)))
+			rr += w * (asin (amax (-1.0) (amin 1.0 (normalize mats[j].row2).z)))
 			if i == 0 do
 			(
-				h0 = m.row4.z - pk.z
-				p0 = asin (amax (-1.0) (amin 1.0 (normalize m.row1).z))
-				r0 = asin (amax (-1.0) (amin 1.0 (normalize m.row2).z))
+				h0 = mats[j].row4.z - pk.z
+				p0 = asin (amax (-1.0) (amin 1.0 (normalize mats[j].row1).z))
+				r0 = asin (amax (-1.0) (amin 1.0 (normalize mats[j].row2).z))
 			)
 		)
+		wsum += w
+	)
+	ax = axw / wsum
+	ay = ayw / wsum
+	if realistic and rigCA.bodyFollow > 0.0 do
+	(
 		dh = rigCA.bodyFollow * (hh / wsum - h0)
 		dp = rigCA.bodyFollow * (pp / wsum - p0)
 		dr = rigCA.bodyFollow * (rr / wsum - r0)
 	)
-	-- Roll about X (left side up is positive), pitch about Y (nose up is negative about Y).
-	out = (rotateXMatrix (bank * k + dr)) * (rotateYMatrix (-dp))
+	-- Turning left pulls the car left (ay above 0): the body leans right, left side up = positive roll.
+	-- Speeding up (ax above 0) lifts the nose; braking dips it. Capped so a sudden start cannot flip it.
+	roll = amax (-15.0) (amin 15.0 (bank * ay)) + dr
+	pitch = amax (-10.0) (amin 10.0 (rigCA.diveSquat * ax)) + dp
+	-- Roll about X, pitch about Y (nose up is negative about Y).
+	out = (rotateXMatrix roll) * (rotateYMatrix (-pitch))
 	out.row4 = rest + [0, 0, dh]
 	out
 )"
@@ -305,19 +330,21 @@ buttonText:"SCR"
 		-- The helper carries the wheel pivot's own orientation (%BASE%) and spins about the pivot axis
 		-- that points across the car (%AXIS%), so a wheel spins about its own axle.
 		local spinScript = @"(
-	local dist = progress / 100.0 * %LEN%
+	%SPLINEFNS%
+	local dist = progress / 100.0 * (splineTable sp)[3]
 	((%AXIS% (%SIGN% * spin * dist / %RADIUS% * 180.0 / pi)) * %BASE%) as quat
 )"
 
 		-- The controls on the rig's "Car Rig" modifier. All are animatable.
-		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4f95)
+		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4f96)
 		(
 			parameters main rollout:params
 			(
 				progress type:#float ui:spProgress default:0.0
 				lookAhead type:#worldUnits ui:spAhead default:100.0
 				steerMax type:#float ui:spSteer default:35.0
-				bank type:#float ui:spBank default:3.0
+				bank type:#float ui:spBank default:4.0
+				diveSquat type:#float ui:spDive default:3.0
 				rayUp type:#worldUnits ui:spRay default:200.0
 				reverse type:#boolean ui:cbReverse default:false
 				spin type:#float ui:spSpin default:1.0
@@ -332,7 +359,8 @@ buttonText:"SCR"
 				spinner spProgress "Progress %" range:[-1e6, 1e6, 0]
 				spinner spAhead "Look ahead" type:#worldunits range:[0, 1e6, 100]
 				spinner spSteer "Max steer (deg)" range:[0, 89, 35]
-				spinner spBank "Bank (deg)" range:[-45, 45, 3]
+				spinner spBank "Bank (deg per g)" range:[-45, 45, 4]
+				spinner spDive "Dive / squat (deg per g)" range:[-45, 45, 3]
 				spinner spRay "Ray start height" type:#worldunits range:[0, 1e6, 200]
 				checkbox cbReverse "Reverse along spline"
 				spinner spSpin "Tyre spin x" range:[-100, 100, 1]
@@ -344,7 +372,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.6.1"
+		local toolVersion = "0.7.0"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -543,7 +571,7 @@ buttonText:"SCR"
 				bc.AddTarget "bank" ca[#bank].controller
 				bc.AddNode "rig" root
 				bc.AddObject "progCtrl" ca[#progress].controller
-				bc.script = substituteString (substituteString (substituteString bankScript "%FRONTDIST%" (front.x as string)) "%LEN%" lenText) "%REST%" (bankRest as string)
+				bc.script = substituteString (substituteString bankScript "%METRE%" ((units.decodeValue "1m") as string)) "%REST%" (bankRest as string)
 				bankH.transform.controller = bc
 
 				if steering do (
@@ -721,7 +749,7 @@ buttonText:"SCR"
 		(
 			spinner spAhead "Look ahead" range:[0, 1e6, 100] type:#worldunits across:3
 			spinner spSteer "Max steer (deg)" range:[0, 89, 35]
-			spinner spBank "Bank (deg)" range:[-45, 45, 3]
+			spinner spBank "Bank (deg per g)" range:[-45, 45, 4]
 		)
 		checkbox cbRigLayer "Put the rig and car on their own layer (untick to leave them where they are)" checked:true
 		button btnBuild "Build rig" width:250 height:28 across:2
@@ -752,11 +780,12 @@ buttonText:"SCR"
 
 		on MaxCarRig_UI open do (
 			local fontStyle = dotNetClass "System.Drawing.FontStyle"
-			for t in #(#root, #aim, #steer, #bank) do case t of (
+			for t in #(#root, #aim, #steer, #bank, #spin) do case t of (
 				#root: rootScript = substituteString rootScript "%SPLINEFNS%" splineFns
 				#aim: aimScript = substituteString aimScript "%SPLINEFNS%" splineFns
 				#steer: steerScript = substituteString steerScript "%SPLINEFNS%" splineFns
 				#bank: bankScript = substituteString bankScript "%SPLINEFNS%" splineFns
+				#spin: spinScript = substituteString spinScript "%SPLINEFNS%" splineFns
 			)
 			for l in #(lblBrand, lblTitle) do (
 				l.BackColor = uiColour #background
