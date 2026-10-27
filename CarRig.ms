@@ -542,7 +542,13 @@ buttonText:"SCR"
 		)
 		button btnBuild "Build rig" width:230 height:28
 		button btnRemove "Remove selected rig" width:230
-		button btnBake "Bake selected rig to keys" width:230
+		group "Bake"
+		(
+			radiobuttons rbBakeRange labels:#("Timeline", "Custom range") columns:2 align:#left
+			spinner spBakeFrom "From frame" type:#integer range:[-100000, 100000, 0] enabled:false across:2 width:105
+			spinner spBakeTo "To" type:#integer range:[-100000, 100000, 100] enabled:false width:80
+			button btnBake "Bake selected rig to keys" width:230
+		)
 		button btnCheck "Check steering (selected rig)" width:230
 		button btnSpeed "Speed test (selected rig)" width:230
 		button btnLog "Open log" width:230
@@ -581,6 +587,14 @@ buttonText:"SCR"
 			refreshUI()
 		)
 		on rbGround changed s do logLine ("Ground " + groundNames[s])
+		on rbBakeRange changed s do (
+			spBakeFrom.enabled = (s == 2)
+			spBakeTo.enabled = (s == 2)
+			if s == 2 do (
+				spBakeFrom.value = animationRange.start.frame as integer
+				spBakeTo.value = animationRange.end.frame as integer
+			)
+		)
 
 		-- Auto detect finds the parts by name: FRONT_LEFT, FRONT_RIGHT, BACK_LEFT, BACK_RIGHT (or REAR_),
 		-- BODY, CAR PATH and CAR SURFACE. Spaces, dashes and upper or lower case do not matter.
@@ -649,7 +663,7 @@ buttonText:"SCR"
 		-- Records every scripted rig node as plain keys on every frame and removes the scripts, so playback
 		-- costs nothing. The Car Rig modifier stops driving the car after this; build again to change it.
 		on btnBake pressed do (
-			local root, all, nodes, h, aimH, samples, i, k, f, frames, cancelled
+			local root, all, nodes, h, aimH, samples, i, k, f, frames, cancelled, fromT, toT
 			root = (for o in selection where getUserProp o "MaxCarRig" == true collect o)[1]
 			if root == undefined then messageBox "Select a rig first (the ..._CarRig rectangle)." title:"Car Rig"
 			else if queryBox "Bake this rig to keys on every frame?\n\nPlayback gets fast, but the Car Rig modifier controls stop working. Undo, or build again, to go back." title:"Car Rig" do (
@@ -661,7 +675,10 @@ buttonText:"SCR"
 				if isValidNode aimH do append nodes aimH
 				for n in all where getUserProp n "MaxCarRig_helper" == true do append nodes n
 				frames = #()
-				for f = animationRange.start to animationRange.end do append frames f
+				-- Outside a custom range the car holds its first and last baked positions.
+				fromT = if rbBakeRange.state == 2 then (amin spBakeFrom.value spBakeTo.value) as time else animationRange.start
+				toT = if rbBakeRange.state == 2 then (amax spBakeFrom.value spBakeTo.value) as time else animationRange.end
+				for f = fromT to toT do append frames f
 				-- Max's status-bar progress bar: first half reads every frame, second half writes the keys.
 				-- Cancel while reading changes nothing; cancel while writing is rolled back with undo.
 				samples = for i = 1 to nodes.count collect #()
@@ -687,7 +704,7 @@ buttonText:"SCR"
 				if cancelled then logLine ("Bake of " + root.name + " cancelled; nothing changed")
 				else (
 					setUserProp root "MaxCarRig_baked" true
-					logLine ("Baked " + root.name + ": " + nodes.count as string + " nodes over " + frames.count as string + " frames")
+					logLine ("Baked " + root.name + ": " + nodes.count as string + " nodes, frames " + fromT as string + " to " + toT as string)
 				)
 			)
 		)
