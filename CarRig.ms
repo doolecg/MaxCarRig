@@ -244,8 +244,19 @@ buttonText:"SCR"
 			matrix3 x (cross z x) z bottom.pos
 		)
 
-		fn wheelCentre w usePivot = if usePivot then w.pos else (w.min + w.max) / 2
-		fn wheelRadius w = (w.max.z - w.min.z) / 2
+		-- The tyre is the biggest mesh in a wheel group. Its box gives the true axle centre and radius;
+		-- the whole group's box is pulled off-centre by brakes and callipers.
+		fn tyreOf w = (
+			local best = w, size = -1.0, sz
+			for n in withDescendants #(w) where superClassOf n == GeometryClass and not isGroupHead n do (
+				sz = length (n.max - n.min)
+				if sz > size do (size = sz; best = n)
+			)
+			best
+		)
+		fn wheelCentre w usePivot = if usePivot then w.pos else (local t = tyreOf w; (t.min + t.max) / 2)
+		fn wheelRadius w = (local t = tyreOf w; (t.max.z - t.min.z) / 2)
+		fn isBrake n = matchPattern n.name pattern:"*brake*" or matchPattern n.name pattern:"*calip*" or matchPattern n.name pattern:"*callip*"
 
 		fn linkTo n parent = (
 			setUserProp n "MaxCarRig_oldParent" (if n.parent == undefined then 0 else n.parent.handle)
@@ -378,6 +389,8 @@ buttonText:"SCR"
 					spc.script = substituteString spinScript "%RADIUS%" ((amax 0.001 (wheelRadius wheels[i])) as string)
 					spinH.rotation.controller = spc
 					linkTo wheels[i] spinH
+					-- Brakes and callipers steer with the wheel but must not spin with it.
+					for n in withDescendants #(wheels[i]) where n != wheels[i] and isBrake n do linkTo n wheelHolder
 				)
 				-- Anything under a picked wheel (hubcaps, brakes) stays with that wheel.
 				wheelParts = withDescendants picked
@@ -474,6 +487,7 @@ buttonText:"SCR"
 		)
 		button btnBuild "Build rig" width:230 height:28
 		button btnRemove "Remove selected rig" width:230
+		button btnSpeed "Speed test (selected rig)" width:230
 		button btnLog "Open log" width:230
 		group "About"
 		(
@@ -545,6 +559,52 @@ buttonText:"SCR"
 			groundList = #()
 			logLine "Ground list cleared"
 			refreshUI()
+		)
+		-- Times each part of the selected rig over 30 frames, then the viewport redraw with the car
+		-- shown and hidden, so the log says what is slow instead of guessing.
+		on btnSpeed pressed do (
+			local root, all, helpers, carParts, wasHidden, aimH, h, t0, ms, tNow, frames = 30, start, span
+			root = (for o in selection where getUserProp o "MaxCarRig" == true collect o)[1]
+			if root == undefined then messageBox "Select a rig first (the green ..._CarRig rectangle)." title:"Car Rig"
+			else (
+				all = withDescendants #(root)
+				helpers = for n in all where getUserProp n "MaxCarRig_helper" == true collect n
+				carParts = for n in all where n != root and getUserProp n "MaxCarRig_helper" != true collect n
+				h = getUserProp root "MaxCarRig_aim"
+				aimH = if h == undefined then undefined else maxOps.getNodeByHandle h
+				start = animationRange.start
+				span = animationRange.end - animationRange.start
+				tNow = sliderTime
+				logLine ("Speed test on " + root.name + ": " + frames as string + " frames, " + helpers.count as string + " helpers, " + carParts.count as string + " car parts")
+
+				t0 = timeStamp()
+				for i = 1 to frames do at time (start + span * i / frames) root.transform
+				logLine ("  rig root (ground rays): " + ((timeStamp() - t0) / frames as float) as string + " ms per frame")
+
+				if isValidNode aimH do (
+					t0 = timeStamp()
+					for i = 1 to frames do at time (start + span * i / frames) aimH.transform
+					logLine ("  aim null: " + ((timeStamp() - t0) / frames as float) as string + " ms per frame")
+				)
+				for n in helpers do (
+					t0 = timeStamp()
+					for i = 1 to frames do at time (start + span * i / frames) n.transform
+					logLine ("  " + n.name + ": " + ((timeStamp() - t0) / frames as float) as string + " ms per frame")
+				)
+
+				t0 = timeStamp()
+				for i = 1 to frames do (sliderTime = start + span * i / frames; completeRedraw())
+				ms = (timeStamp() - t0) / frames as float
+				logLine ("  viewport redraw, car shown: " + ms as string + " ms per frame")
+				wasHidden = for n in carParts collect n.isHidden
+				for n in carParts do n.isHidden = true
+				t0 = timeStamp()
+				for i = 1 to frames do (sliderTime = start + span * i / frames; completeRedraw())
+				logLine ("  viewport redraw, car hidden: " + ((timeStamp() - t0) / frames as float) as string + " ms per frame")
+				for i = 1 to carParts.count do carParts[i].isHidden = wasHidden[i]
+				sliderTime = tNow
+				messageBox ("Speed test done. Press Open log and send me the Speed test lines.") title:"Car Rig"
+			)
 		)
 		on btnLog pressed do (
 			if doesFileExist logPath then shellLaunch logPath "" else messageBox ("No log yet: " + logPath) title:"Car Rig"
