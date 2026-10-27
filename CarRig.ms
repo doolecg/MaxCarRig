@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.11.1" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.12.0" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
@@ -538,7 +538,7 @@ buttonText:"SCR"
 		-- The Car Rig modifier. Each parameter block has its own panel in the command panel, so the settings sit
 		-- in short folding panels instead of one long column. Scripts read values as rigCA.<name>; the tool
 		-- reaches animated values with getPropertyController, which works whichever block they are in.
-		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4fa1)
+		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4fa2)
 		(
 			parameters pPresets rollout:rPresets
 			(
@@ -557,6 +557,7 @@ buttonText:"SCR"
 				easeStop type:#float ui:spEaseStop default:40.0
 				speedSet type:#float ui:spSpeedSet default:30.0
 				speedUnit type:#integer ui:ddUnit default:2
+				speedLocked type:#boolean ui:cbKeepSpeed default:false
 				-- Set at build: one metre in scene units, and the spline, for the speed tools.
 				metre type:#float default:1000.0
 				pathHandle type:#integer default:0
@@ -725,6 +726,7 @@ buttonText:"SCR"
 					spinner spSpeedSet "Cruise speed" range:[1, 1000, 30] fieldwidth:64
 					dropdownlist ddUnit "Unit" items:#("km/h", "mph") width:70 align:#right
 					button btnSetSpeed "Set run from speed" width:130
+					checkbox cbKeepSpeed "Keep speed if spline changes"
 				)
 				on rDrive open do readSpeed = lblSpeed
 				on rDrive close do readSpeed = undefined
@@ -757,7 +759,7 @@ buttonText:"SCR"
 						-- Cruise time, plus half of each ease (speeding up and slowing down average half speed).
 						frames = len / (amax 0.01 mps) * frameRate + (if this.easeOn then (this.easeStart + this.easeStop) / 2.0 else 0.0)
 						c = getPropertyController this "progress"
-						t0 = if c != undefined and c.keys.count >= 1 then c.keys[1].time else animationRange.start
+						t0 = 0f
 						undo "Set run from speed" on
 						(
 							if c != undefined do deleteKeys c #allKeys
@@ -768,7 +770,8 @@ buttonText:"SCR"
 							)
 							c = getPropertyController this "progress"
 							if c != undefined do for k in c.keys do (k.inTangentType = #linear; k.outTangentType = #linear)
-							if t0 + frames as time > animationRange.end do animationRange = interval animationRange.start (t0 + frames as time)
+							if t0 + frames as time > animationRange.end do animationRange = interval (amin animationRange.start t0) (t0 + frames as time)
+							this.speedLocked = true
 						)
 						showSpeed()
 					)
@@ -817,7 +820,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.11.1"
+		local toolVersion = "0.12.0"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -1258,6 +1261,66 @@ ca.metre = units.decodeValue "1m"
 			if m == undefined then undefined else custAttributes.get m 1
 		)
 
+		-- Re-times the Progress keys so the car cruises at the set speed along the rig's spline, starting on
+		-- frame 0. Used by Keep speed when the spline changes (the modifier's own button does the same).
+		fn setRunFromSpeed ca = (
+			local sp, len, mps, frames, c, t0 = 0f
+			sp = maxOps.getNodeByHandle ca.pathHandle
+			if isValidNode sp do (
+				len = (curveLength sp 1) / (amax 0.0001 ca.metre)
+				mps = if ca.speedUnit == 2 then ca.speedSet / 2.23694 else ca.speedSet / 3.6
+				frames = len / (amax 0.01 mps) * frameRate + (if ca.easeOn then (ca.easeStart + ca.easeStop) / 2.0 else 0.0)
+				c = getPropertyController ca "progress"
+				if c != undefined do deleteKeys c #allKeys
+				with animate on (
+					at time t0 ca.progress = 0.0
+					at time (t0 + frames as time) ca.progress = 100.0
+				)
+				c = getPropertyController ca "progress"
+				if c != undefined do for k in c.keys do (k.inTangentType = #linear; k.outTangentType = #linear)
+				if t0 + frames as time > animationRange.end do animationRange = interval (amin animationRange.start t0) (t0 + frames as time)
+			)
+		)
+
+		-- Edits to a rig's spline or ground are picked up at once: the stored spline table, speed plan and
+		-- ground grid for that object are dropped (rebuilt on the next frame), and rigs with Keep speed on get
+		-- their Progress keys re-timed for the new spline length. Watchers are set up for every rig in the scene
+		-- when the tool opens and when a rig is built or refreshed.
+		fn onSplineChanged sp = (
+			local i, ca
+			global MaxCarRig_splines3, MaxCarRig_plans
+			if MaxCarRig_splines3 != undefined do for i = MaxCarRig_splines3.count to 1 by -1 where MaxCarRig_splines3[i][1] == sp do deleteItem MaxCarRig_splines3 i
+			if MaxCarRig_plans != undefined do for i = MaxCarRig_plans.count to 1 by -1 where MaxCarRig_plans[i][1] == sp do deleteItem MaxCarRig_plans i
+			for r in objects where getUserProp r "MaxCarRig" == true do (
+				ca = rigParams r
+				if ca != undefined and ca.pathHandle == sp.handle and (try (ca.speedLocked) catch (false)) do setRunFromSpeed ca
+			)
+		)
+		fn onGroundChanged g = (
+			local i
+			global MaxCarRig_grids
+			if MaxCarRig_grids != undefined do for i = MaxCarRig_grids.count to 1 by -1 where MaxCarRig_grids[i][1] == g do deleteItem MaxCarRig_grids i
+		)
+		fn watchRigs = (
+			local splines = #(), grounds = #(), h
+			global MaxCarRig_onSpline, MaxCarRig_onGround
+			MaxCarRig_onSpline = onSplineChanged
+			MaxCarRig_onGround = onGroundChanged
+			deleteAllChangeHandlers id:#MaxCarRigWatch
+			for r in objects where getUserProp r "MaxCarRig" == true do (
+				h = rawProp r "MaxCarRig_inPath"
+				if h != undefined do for n in nodesFrom h where isValidNode n and findItem splines n == 0 do append splines n
+				h = rawProp r "MaxCarRig_inGrounds"
+				if h != undefined do for n in nodesFrom h where isValidNode n and findItem grounds n == 0 do append grounds n
+			)
+			if splines.count > 0 do (
+				when geometry splines changes id:#MaxCarRigWatch handleAt:#redrawViews sp do MaxCarRig_onSpline sp
+				when transform splines changes id:#MaxCarRigWatch handleAt:#redrawViews sp do MaxCarRig_onSpline sp
+			)
+			if grounds.count > 0 do
+				when geometry grounds changes id:#MaxCarRigWatch handleAt:#redrawViews g do MaxCarRig_onGround g
+		)
+
 		fn refreshUI = (
 			local full = rbMode.state > 1
 			for c in #(rbGround, lbGround, btnGroundAdd, btnGroundDel, btnGroundClear, spRay, ddCentre, \
@@ -1267,6 +1330,7 @@ ca.metre = units.decodeValue "1m"
 
 		on MaxCarRig_UI open do (
 			local fontStyle = dotNetClass "System.Drawing.FontStyle"
+			watchRigs()
 			for t in #(#root, #aim, #steer, #bank, #spin) do case t of (
 				#root: rootScript = substituteString rootScript "%SPLINEFNS%" splineFns
 				#aim: aimScript = substituteString aimScript "%SPLINEFNS%" splineFns
@@ -1676,6 +1740,7 @@ ca.metre = units.decodeValue "1m"
 							wheels (ddCentre.selection == 1) spAhead.value spSteer.value spBank.value
 						if cbRigLayer.checked do moveToRigLayer root
 						saveBuildInfo root carNodes pathShape grounds bottomNode fwdUse mode wheels (ddCentre.selection == 1) cbRigLayer.checked
+						watchRigs()
 						select root
 						logLine ("  built: " + root.name + ", children: " + names (withDescendants #(root)))
 					)
@@ -1710,7 +1775,7 @@ ca.metre = units.decodeValue "1m"
 				else (
 					-- Keep every modifier setting: animated ones as a copy of their controller (keys included).
 					ca = rigParams root
-					names = #(#progress, #lookAhead, #steerMax, #bank, #rayUp, #spin, #suspension, #travel, #diveSquat, #bankTime, #pitchTime, #startTime, #bodyFollow, #bodyLag, #reverse, #realistic, #maxBank, #maxPitch, #cornerSlow, #cornerSpeed, #cornerRadius, #brakeG, #easeOn, #easeStart, #easeStop, #speedSet, #speedUnit, #carType, #suspType, #lookType)
+					names = #(#progress, #lookAhead, #steerMax, #bank, #rayUp, #spin, #suspension, #travel, #diveSquat, #bankTime, #pitchTime, #startTime, #bodyFollow, #bodyLag, #reverse, #realistic, #maxBank, #maxPitch, #cornerSlow, #cornerSpeed, #cornerRadius, #brakeG, #easeOn, #easeStart, #easeStop, #speedSet, #speedUnit, #carType, #suspType, #lookType, #speedLocked)
 					saved = #()
 					for n in names do (
 						c = try (getPropertyController ca (n as string)) catch (undefined)
@@ -1732,6 +1797,7 @@ ca.metre = units.decodeValue "1m"
 							)
 							if useLayer do moveToRigLayer newRoot
 							saveBuildInfo newRoot cars path grounds bottom fwdIndex mode wheels usePivot useLayer
+							watchRigs()
 							select newRoot
 							logLine ("  refreshed: " + newRoot.name)
 						)
