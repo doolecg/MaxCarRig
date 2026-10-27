@@ -545,7 +545,7 @@ buttonText:"SCR"
 		on pbRR picked o do (wheelNodes[4] = partOf o; pbRR.object = wheelNodes[4]; logLine ("Wheel RR: picked " + o.name + ", using " + wheelNodes[4].name))
 
 		on btnBuild pressed do (
-			local off
+			local pivotGap
 			local mode = rbMode.state
 			carNodes = for n in carNodes where isValidNode n collect n
 			groundList = for n in groundList where isValidNode n collect n
@@ -585,9 +585,9 @@ buttonText:"SCR"
 			logLine ("  path: " + (if isValidNode pathShape then pathShape.name else "-") + ", BOTTOM: " + (if isValidNode bottomNode then bottomNode.name else "-"))
 			logLine ("  wheels FL FR RL RR: " + names wheels)
 			for w in wheels where isValidNode w do (
-				off = distance w.pos ((w.min + w.max) / 2)
-				if off > (w.max.z - w.min.z) * 0.25 do
-					logLine ("  warning: " + w.name + " pivot is " + off as string + " units from its centre. Use Wheel centre: Bounding box centre, or fix the pivot.")
+				pivotGap = distance w.pos ((w.min + w.max) / 2)
+				if pivotGap > (w.max.z - w.min.z) * 0.25 do
+					logLine ("  warning: " + w.name + " pivot is " + pivotGap as string + " units from its centre. Use Wheel centre: Bounding box centre, or fix the pivot.")
 			)
 			if err != undefined then (
 				logLine ("  stopped: " + err)
