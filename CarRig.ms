@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.9.2" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.9.3" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
@@ -459,20 +459,20 @@ buttonText:"SCR"
 )"
 
 		-- The controls on the rig's "Car Rig" modifier. All are animatable.
-		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4f9a)
+		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4f9b)
 		(
 			parameters main rollout:params
 			(
 				progress type:#float ui:spProgress default:0.0
 				lookAhead type:#worldUnits ui:spAhead default:100.0
 				steerMax type:#float ui:spSteer default:35.0
-				bank type:#float ui:spBank default:4.0
-				diveSquat type:#float ui:spDive default:3.0
-				maxBank type:#float ui:spMaxBank default:6.0
+				bank type:#float ui:spBank default:45.0
+				diveSquat type:#float ui:spDive default:42.0
+				maxBank type:#float ui:spMaxBank default:45.0
 				maxPitch type:#float ui:spMaxPitch default:4.0
-				bankTime type:#float ui:spBankTime default:10.0
-				pitchTime type:#float ui:spPitchTime default:6.0
-				startTime type:#float ui:spStartTime default:10.0
+				bankTime type:#float ui:spBankTime default:60.0
+				pitchTime type:#float ui:spPitchTime default:8.0
+				startTime type:#float ui:spStartTime default:8.0
 				rayUp type:#worldUnits ui:spRay default:200.0
 				reverse type:#boolean ui:cbReverse default:false
 				spin type:#float ui:spSpin default:1.0
@@ -483,12 +483,41 @@ buttonText:"SCR"
 				cornerAmount type:#float ui:spCornerAmt default:0.5
 				cornerRadius type:#worldUnits ui:spCornerRad default:20000.0
 				cornerBrake type:#worldUnits ui:spCornerBrake default:15000.0
-				bodyFollow type:#float ui:spFollow default:0.6
-				bodyLag type:#float ui:spLag default:4.0
+				bodyFollow type:#float ui:spFollow default:1.0
+				bodyLag type:#float ui:spLag default:3.0
 			)
 			-- Short labels in groups: the command panel is narrow and long labels get cut off.
 			rollout params "Car Rig"
 			(
+				-- Presets fill in Bank, Dive / squat and Body. Values: bank, bank ease, max bank, dive, start ease,
+				-- stop ease, max dive, follow, lag, realistic. V1 default is the studio's approved look.
+				dropdownlist ddPreset "Preset" items:#("Choose a preset...", "V1 default", "Subtle", "Sporty", "Exaggerated", "Off (no body motion)")
+				on ddPreset selected i do
+				(
+					local p = case i of
+					(
+						2: #(45.0, 60.0, 45.0, 42.0, 8.0, 8.0, 4.0, 1.0, 3.0, true)
+						3: #(4.0, 12.0, 6.0, 3.0, 10.0, 6.0, 3.0, 0.5, 4.0, true)
+						4: #(15.0, 20.0, 15.0, 10.0, 8.0, 5.0, 6.0, 0.8, 3.0, true)
+						5: #(80.0, 40.0, 60.0, 60.0, 6.0, 4.0, 15.0, 1.0, 2.0, true)
+						6: #(0.0, 10.0, 0.0, 0.0, 8.0, 8.0, 0.0, 0.0, 4.0, false)
+						default: undefined
+					)
+					if p != undefined do
+					(
+						bank = p[1]
+						bankTime = p[2]
+						maxBank = p[3]
+						diveSquat = p[4]
+						startTime = p[5]
+						pitchTime = p[6]
+						maxPitch = p[7]
+						bodyFollow = p[8]
+						bodyLag = p[9]
+						realistic = p[10]
+					)
+					ddPreset.selection = 1
+				)
 				group "Drive"
 				(
 					spinner spProgress "Progress %" range:[-1e6, 1e6, 0] fieldwidth:56
@@ -499,14 +528,14 @@ buttonText:"SCR"
 				group "Bank (turns)"
 				(
 					spinner spBank "Deg per g" range:[-500, 500, 4] fieldwidth:56
-					spinner spBankTime "Ease frames" range:[1, 60, 10] fieldwidth:56
-					spinner spMaxBank "Max deg" range:[0, 90, 6] fieldwidth:56
+					spinner spBankTime "Ease frames" range:[1, 120, 60] fieldwidth:56
+					spinner spMaxBank "Max deg" range:[0, 90, 45] fieldwidth:56
 				)
 				group "Dive / squat (stop, start)"
 				(
-					spinner spDive "Deg per g" range:[-500, 500, 3] fieldwidth:56
-					spinner spStartTime "Start ease" range:[1, 60, 10] fieldwidth:56
-					spinner spPitchTime "Stop ease" range:[1, 60, 6] fieldwidth:56
+					spinner spDive "Deg per g" range:[-500, 500, 42] fieldwidth:56
+					spinner spStartTime "Start ease" range:[1, 120, 8] fieldwidth:56
+					spinner spPitchTime "Stop ease" range:[1, 120, 8] fieldwidth:56
 					spinner spMaxPitch "Max deg" range:[0, 90, 4] fieldwidth:56
 				)
 				group "Wheels"
@@ -526,13 +555,13 @@ buttonText:"SCR"
 				group "Body"
 				(
 					checkbox cbRealistic "Realistic motion"
-					spinner spFollow "Follow" range:[0, 1, 0.6] fieldwidth:56
-					spinner spLag "Lag frames" range:[0, 12, 4] fieldwidth:56
+					spinner spFollow "Follow" range:[0, 1, 1] fieldwidth:56
+					spinner spLag "Lag frames" range:[0, 12, 3] fieldwidth:56
 				)
 			)
 		)
 
-		local toolVersion = "0.9.2"
+		local toolVersion = "0.9.3"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -912,7 +941,7 @@ buttonText:"SCR"
 		(
 			spinner spAhead "Look ahead" range:[0, 1e6, 100] type:#worldunits across:3
 			spinner spSteer "Max steer (deg)" range:[0, 89, 35]
-			spinner spBank "Bank (deg per g)" range:[-500, 500, 4]
+			spinner spBank "Bank (deg per g)" range:[-500, 500, 45]
 		)
 		checkbox cbRigLayer "Put the rig and car on their own layer (untick to leave them where they are)" checked:true
 		button btnBuild "Build rig" width:165 height:28 across:3
