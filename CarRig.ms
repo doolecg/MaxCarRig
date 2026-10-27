@@ -2,9 +2,12 @@
 -- The car follows a spline and sits flat on ground geometry, using either one
 -- BOTTOM helper (body mode) or four wheel contact points (per-wheel mode).
 -- Run this file once (Scripting > Run Script). It opens the tool and adds the
--- "Car Rig" action under category "3D Tools" for toolbars, menus and hotkeys.
+-- "SCR" action under category "V1_Scripts" for toolbars, menus and hotkeys.
 
-macroScript MaxCarRig category:"3D Tools" buttonText:"Car Rig" tooltip:"Car Rig: follow a spline and sit on ground geometry"
+macroScript V1_SimpleCarRig
+category:"V1_Scripts"
+toolTip:"V1 - Simple Car Rig"
+buttonText:"SCR"
 (
 	global MaxCarRig_UI
 	try (destroyDialog MaxCarRig_UI) catch ()
@@ -259,4 +262,4 @@ macroScript MaxCarRig category:"3D Tools" buttonText:"Car Rig" tooltip:"Car Rig:
 	on execute do createDialog MaxCarRig_UI
 )
 
-macros.run "3D Tools" "MaxCarRig"
+macros.run "V1_Scripts" "V1_SimpleCarRig"

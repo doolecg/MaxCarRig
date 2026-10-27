@@ -6,11 +6,11 @@ A 3ds Max script that turns a car model into a simple rig that drives along a sp
 
 Needs 3ds Max 2017 or newer on Windows.
 
-1. In 3ds Max: Scripting > Run Script, pick `CarRig.ms`.
+1. Drag `dist/V1_SimpleCarRig.mzp` onto a 3ds Max viewport (rebuild it with `powershell -File tools/build-mzp.ps1`), or use Scripting > Run Script and pick `CarRig.ms`.
 2. Select the car, press Use selection as car, pick the spline, add the ground, press Create at car bottom.
 3. Press Build rig and scrub the timeline.
 
-That's it. The car now follows the spline from start to end over the active time range. The tool also adds a "Car Rig" action under category "3D Tools" for toolbars and hotkeys.
+That's it. The car now follows the spline from start to end over the active time range. The tool also adds an "SCR" button (V1 - Simple Car Rig) under category "V1_Scripts" for toolbars and hotkeys.
 
 ## What it does
 
