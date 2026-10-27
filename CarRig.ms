@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.9.3" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.9.4" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
@@ -561,7 +561,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.9.3"
+		local toolVersion = "0.9.4"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -1024,7 +1024,7 @@ buttonText:"SCR"
 			lblBrand.Text = "VISUALISATION ONE      v" + toolVersion
 			lblTitle.Font = dotNetObject "System.Drawing.Font" "Georgia" 15 fontStyle.Regular
 			lblTitle.Text = "Simple Car Rig"
-			spAhead.value = units.decodeValue "8m"
+			spAhead.value = units.decodeValue "4m"
 			logLine ("Opened tool v" + toolVersion + ". Max version " + ((maxVersion())[1] as string) + ", log: " + logPath)
 			refreshUI()
 		)
