@@ -11,7 +11,6 @@ toolTip:"V1 - Simple Car Rig"
 buttonText:"SCR"
 (
 	global MaxCarRig_UI
-	try (destroyDialog MaxCarRig_UI) catch ()
 
 	rollout MaxCarRig_UI "Car Rig" width:260
 	(
@@ -50,8 +49,8 @@ buttonText:"SCR"
 	u = progress / 100.0
 	if rigCA.reverse do u = 1.0 - u
 	u = if isClosed sp 1 then (mod ((mod u 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 u))
-	p = lengthInterp sp 1 u
-	fwd = normalize (lengthTangent sp 1 u)
+	p = in coordsys world lengthInterp sp 1 u
+	fwd = normalize (in coordsys world lengthTangent sp 1 u)
 	if rigCA.reverse do fwd = -fwd
 	case mode of
 	(
@@ -99,7 +98,7 @@ buttonText:"SCR"
 	local a = if len < 0.001 then 0.0 else ahead / len
 	local u = if rigCA.reverse then 1.0 - progress / 100.0 - a else progress / 100.0 + a
 	u = if isClosed sp 1 then (mod ((mod u 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 u))
-	lengthInterp sp 1 u
+	in coordsys world lengthInterp sp 1 u
 )"
 
 		-- Steering (Rotation Script). One instance drives both front wheels, so they always turn together.
@@ -575,7 +574,10 @@ buttonText:"SCR"
 		)
 	)
 
-	on execute do createDialog MaxCarRig_UI
+	on execute do (
+		try (destroyDialog MaxCarRig_UI) catch ()
+		createDialog MaxCarRig_UI
+	)
 )
 
 macros.run "V1_Scripts" "V1_SimpleCarRig"
