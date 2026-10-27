@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.5.1" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.6.0" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
@@ -21,6 +21,64 @@ buttonText:"SCR"
 
 		-- The controller scripts below live in the scene file, so a rigged scene keeps
 		-- working on a PC without this tool.
+
+		-- Spline lookup functions shared by the rig scripts (pasted in when the tool opens).
+		local splineFns = @"-- Spline lookups from a table: the spline is sampled once into points with running lengths and kept in
+	-- a global. lengthInterp re-measures the whole spline on every call (about 100 ms on a long road), and
+	-- the rig asked several times a frame. The table is rebuilt when the spline moves or its knot count changes.
+	global MaxCarRig_splines
+	fn splineTable sp =
+	(
+		local tab, key1, key2, e, pts, lens, ns, i, j, total, steps = 8
+		if MaxCarRig_splines == undefined do MaxCarRig_splines = #()
+		key1 = sp.transform as string
+		key2 = numKnots sp 1
+		for i = MaxCarRig_splines.count to 1 by -1 do
+		(
+			e = MaxCarRig_splines[i]
+			if not isValidNode e[1] then deleteItem MaxCarRig_splines i
+			else if e[1] == sp do
+			(
+				if e[2] == key1 and e[3] == key2 then tab = e[4]
+				else deleteItem MaxCarRig_splines i
+			)
+		)
+		if tab == undefined do
+		(
+			pts = #()
+			ns = numSegments sp 1
+			for i = 1 to ns do
+				for j = (if i == 1 then 0 else 1) to steps do
+					append pts (in coordsys world interpBezier3D sp 1 i ((j as float) / steps))
+			lens = #(0.0)
+			total = 0.0
+			for i = 2 to pts.count do
+			(
+				total += distance pts[i] pts[i - 1]
+				append lens total
+			)
+			tab = #(pts, lens, amax 0.001 total)
+			append MaxCarRig_splines #(sp, key1, key2, tab)
+		)
+		tab
+	)
+	fn splineAt sp f =
+	(
+		local tab, pts, lens, target, lo, hi, mid, a
+		tab = splineTable sp
+		pts = tab[1]
+		lens = tab[2]
+		target = f * tab[3]
+		lo = 1
+		hi = pts.count
+		while hi - lo > 1 do
+		(
+			mid = (lo + hi) / 2
+			if lens[mid] <= target then lo = mid else hi = mid
+		)
+		a = if lens[hi] > lens[lo] then (target - lens[lo]) / (lens[hi] - lens[lo]) else 0.0
+		#(pts[lo] + (pts[hi] - pts[lo]) * a, normalize (pts[hi] - pts[lo]))
+	)"
 
 		-- Ground ray functions shared by the rig root and the suspension scripts (pasted in at build).
 		local rayFns = @"-- Ray tests use a voxel grid per ground object (RayMeshGridIntersect), built once and kept
@@ -76,8 +134,9 @@ buttonText:"SCR"
 	local grounds = #(%GROUNDS%)
 	local offs = #(%OFFSETS%)
 	-- All locals up front: Max throws a Bad free thunk error for locals declared in a nested block and read in a loop.
-	local u, p, fwd, y, h, up, guess, hits, w, x, tm, mid, offMid
+	local u, p, fwd, y, h, up, guess, hits, w, x, tm, mid, offMid, sa
 	%RAYFNS%
+	%SPLINEFNS%
 	fn frameFrom x z pos =
 	(
 		local y = normalize (cross z x)
@@ -86,8 +145,9 @@ buttonText:"SCR"
 	u = progress / 100.0
 	if rigCA.reverse do u = 1.0 - u
 	u = if isClosed sp 1 then (mod ((mod u 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 u))
-	p = in coordsys world lengthInterp sp 1 u
-	fwd = normalize (in coordsys world lengthTangent sp 1 u)
+	sa = splineAt sp u
+	p = sa[1]
+	fwd = sa[2]
 	if rigCA.reverse do fwd = -fwd
 	case mode of
 	(
@@ -131,11 +191,12 @@ buttonText:"SCR"
 
 		-- Aim null (Position Script): Look ahead units further along the spline than the car.
 		local aimScript = @"(
-	local len = %LEN%
+	%SPLINEFNS%
+	local len = (splineTable sp)[3]
 	local a = if len < 0.001 then 0.0 else ahead / len
 	local u = if rigCA.reverse then 1.0 - progress / 100.0 - a else progress / 100.0 + a
 	u = if isClosed sp 1 then (mod ((mod u 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 u))
-	in coordsys world lengthInterp sp 1 u
+	(splineAt sp u)[1]
 )"
 
 		-- Steering (Rotation Script). One instance drives both front wheels, so they always turn together.
@@ -144,15 +205,16 @@ buttonText:"SCR"
 		-- be thrown off by which way the car or its pivots face. Positive = turn left, about the car up axis.
 		local steerScript = @"(
 	local len, u, s, uf, ua, t, v, ang, k
+	%SPLINEFNS%
 	fn wrapU sp x = if isClosed sp 1 then (mod ((mod x 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 x))
-	len = %LEN%
+	len = (splineTable sp)[3]
 	s = if rigCA.reverse then -1.0 else 1.0
 	u = progress / 100.0
 	if rigCA.reverse do u = 1.0 - u
 	uf = wrapU sp (u + s * %FRONTDIST% / len)
 	ua = wrapU sp (u + s * ahead / len)
-	t = s * (in coordsys world lengthTangent sp 1 (wrapU sp u))
-	v = (in coordsys world lengthInterp sp 1 ua) - (in coordsys world lengthInterp sp 1 uf)
+	t = s * (splineAt sp (wrapU sp u))[2]
+	v = (splineAt sp ua)[1] - (splineAt sp uf)[1]
 	t.z = 0.0
 	v.z = 0.0
 	ang = if (length v) < 0.001 or (length t) < 0.001 then 0.0 else atan2 ((cross t v).z) (dot t v)
@@ -165,17 +227,18 @@ buttonText:"SCR"
 		-- same every time you scrub or render. Body follow scales how much of it the body takes.
 		local bankScript = @"(
 	local len, u, s, uf, ua, t, v, ang, k
+	%SPLINEFNS%
 	local rest = %REST%
 	local dh = 0.0, dp = 0.0, dr = 0.0, n, i, w, wsum, tk, m, uk, pk, hh, pp, rr, h0, p0, r0, out
 	fn wrapU sp x = if isClosed sp 1 then (mod ((mod x 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 x))
-	len = %LEN%
+	len = (splineTable sp)[3]
 	s = if rigCA.reverse then -1.0 else 1.0
 	u = progress / 100.0
 	if rigCA.reverse do u = 1.0 - u
 	uf = wrapU sp (u + s * %FRONTDIST% / len)
 	ua = wrapU sp (u + s * ahead / len)
-	t = s * (in coordsys world lengthTangent sp 1 (wrapU sp u))
-	v = (in coordsys world lengthInterp sp 1 ua) - (in coordsys world lengthInterp sp 1 uf)
+	t = s * (splineAt sp (wrapU sp u))[2]
+	v = (splineAt sp ua)[1] - (splineAt sp uf)[1]
 	t.z = 0.0
 	v.z = 0.0
 	ang = if (length v) < 0.001 or (length t) < 0.001 then 0.0 else atan2 ((cross t v).z) (dot t v)
@@ -193,7 +256,7 @@ buttonText:"SCR"
 			m = at time tk rig.transform
 			uk = (at time tk progCtrl.value) / 100.0
 			if rigCA.reverse do uk = 1.0 - uk
-			pk = in coordsys world lengthInterp sp 1 (wrapU sp uk)
+			pk = (splineAt sp (wrapU sp uk))[1]
 			w = exp (-(i as float) / rigCA.bodyLag)
 			hh += w * (m.row4.z - pk.z)
 			pp += w * (asin (amax (-1.0) (amin 1.0 (normalize m.row1).z)))
@@ -278,7 +341,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.5.1"
+		local toolVersion = "0.6.0"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -686,6 +749,12 @@ buttonText:"SCR"
 
 		on MaxCarRig_UI open do (
 			local fontStyle = dotNetClass "System.Drawing.FontStyle"
+			for t in #(#root, #aim, #steer, #bank) do case t of (
+				#root: rootScript = substituteString rootScript "%SPLINEFNS%" splineFns
+				#aim: aimScript = substituteString aimScript "%SPLINEFNS%" splineFns
+				#steer: steerScript = substituteString steerScript "%SPLINEFNS%" splineFns
+				#bank: bankScript = substituteString bankScript "%SPLINEFNS%" splineFns
+			)
 			for l in #(lblBrand, lblTitle) do (
 				l.BackColor = uiColour #background
 				l.ForeColor = uiColour #text
