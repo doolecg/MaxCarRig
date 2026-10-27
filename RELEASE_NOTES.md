@@ -1,3 +1,30 @@
+# V1 Simple Car Rig 0.9.6
+
+## New
+- Bank on turns from real cornering: speed squared times how sharp the bend is. Sharper and faster turns lean more.
+- Dive and squat: the nose dips when braking and lifts when pulling away, with separate Start ease and Stop ease.
+- Ease in / out: the car pulls away from rest and brakes to a stop before the end of the spline, still on your Progress keys.
+- Corner slowdown (optional): the car slows into bends and makes the time up on straights.
+- Presets on the Car Rig modifier: Car type (10 types), Suspension (soft, mid, hard) and Body look.
+- Refresh selected rig: rebuilds from the same parts, keeping every modifier setting and the Progress keys.
+- Check steering now also reports body and suspension numbers.
+
+---
+
+## Changed
+- Bank and dive limits ease in softly (Max bank, Max dive / squat) and can be pushed far for a stylised look.
+- Car Rig modifier laid out in short groups so no labels are cut off.
+- Defaults: V1 look (bank 45 per g, 60-frame ease), 4 m look ahead.
+- Spline edits are picked up automatically.
+
+---
+
+## Fixed
+- Jittery banking: the lean now comes from the spline and Progress keys, not the bumpy ground fit.
+- Ground rays that miss (spline under the road) try again from higher up.
+
+---
+
 # V1 Simple Car Rig 0.6.1
 
 ## New
