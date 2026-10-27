@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.8.0" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.8.1" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
@@ -130,17 +130,22 @@ buttonText:"SCR"
 	)
 	fn castDown grounds p rayUp =
 	(
-		local best = undefined, o, rm, n, i, d
-		o = p + [0,0,rayUp]
-		for g in grounds where isValidNode g and p.x >= g.min.x and p.x <= g.max.x and p.y >= g.min.y and p.y <= g.max.y do
+		local best = undefined, o, rm, n, i, d, tries, lift
+		-- If nothing is hit (the spline dips under the road there), try again from 100 times higher.
+		for tries = 1 to 2 while best == undefined do
 		(
-			rm = gridFor g
-			n = rm.intersectRay o [0,0,-1] false
-			if n > 0 do
+			lift = if tries == 1 then rayUp else (amax 1.0 rayUp) * 100.0
+			o = p + [0, 0, lift]
+			for g in grounds where isValidNode g and p.x >= g.min.x and p.x <= g.max.x and p.y >= g.min.y and p.y <= g.max.y do
 			(
-				i = rm.getClosestHit()
-				d = rm.getHitDist i
-				if best == undefined or (o.z - d) > best.pos.z do best = ray (o - [0,0,d]) (rm.getHitNormal i)
+				rm = gridFor g
+				n = rm.intersectRay o [0,0,-1] false
+				if n > 0 do
+				(
+					i = rm.getClosestHit()
+					d = rm.getHitDist i
+					if best == undefined or (o.z - d) > best.pos.z do best = ray (o - [0,0,d]) (rm.getHitNormal i)
+				)
 			)
 		)
 		best
@@ -332,8 +337,11 @@ buttonText:"SCR"
 	)
 	-- Turning left pulls the car left (ay above 0): the body leans right, left side up = positive roll.
 	-- Speeding up (ax above 0) lifts the nose; braking dips it. Capped so nothing can flip the car.
-	roll = amax (-15.0) (amin 15.0 (bank * ay)) + dr
-	pitch = amax (-10.0) (amin 10.0 (rigCA.diveSquat * ax)) + dp
+	-- Soft limits: the lean eases towards Max bank / Max dive-squat instead of hitting a hard stop.
+	roll = (amax 0.01 rigCA.maxBank) * (tanh ((bank * ay) / (amax 0.01 rigCA.maxBank))) + dr
+	pitch = (amax 0.01 rigCA.maxPitch) * (tanh ((rigCA.diveSquat * ax) / (amax 0.01 rigCA.maxPitch))) + dp
+	global MaxCarRig_lastBody
+	MaxCarRig_lastBody = #(F, ax, ay, roll, pitch, dh, dp, dr)
 	-- Roll about X, pitch about Y (nose up is negative about Y).
 	out = (rotateXMatrix roll) * (rotateYMatrix (-pitch))
 	out.row4 = rest + [0, 0, dh]
@@ -369,7 +377,7 @@ buttonText:"SCR"
 )"
 
 		-- The controls on the rig's "Car Rig" modifier. All are animatable.
-		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4f97)
+		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4f98)
 		(
 			parameters main rollout:params
 			(
@@ -378,6 +386,8 @@ buttonText:"SCR"
 				steerMax type:#float ui:spSteer default:35.0
 				bank type:#float ui:spBank default:4.0
 				diveSquat type:#float ui:spDive default:3.0
+				maxBank type:#float ui:spMaxBank default:6.0
+				maxPitch type:#float ui:spMaxPitch default:4.0
 				bankTime type:#float ui:spBankTime default:10.0
 				pitchTime type:#float ui:spPitchTime default:8.0
 				rayUp type:#worldUnits ui:spRay default:200.0
@@ -398,6 +408,8 @@ buttonText:"SCR"
 				spinner spDive "Dive / squat (deg per g)" range:[-45, 45, 3]
 				spinner spBankTime "Bank ease (frames)" range:[1, 60, 10]
 				spinner spPitchTime "Stop/start ease (frames)" range:[1, 60, 8]
+				spinner spMaxBank "Max bank (deg)" range:[0, 45, 6]
+				spinner spMaxPitch "Max dive / squat (deg)" range:[0, 45, 4]
 				spinner spRay "Ray start height" type:#worldunits range:[0, 1e6, 200]
 				checkbox cbReverse "Reverse along spline"
 				spinner spSpin "Tyre spin x" range:[-100, 100, 1]
@@ -409,7 +421,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.8.0"
+		local toolVersion = "0.8.1"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -1137,7 +1149,7 @@ buttonText:"SCR"
 		)
 		-- Writes the real numbers behind the steering at the current frame, for bug reports.
 		on btnCheck pressed do (
-			local root, tm, h, aimH, a, all
+			local root, tm, h, aimH, a, all, rel
 			root = (for o in selection where getUserProp o "MaxCarRig" == true collect o)[1]
 			if root == undefined then messageBox "Select a rig first (the ..._CarRig rectangle)." title:"Car Rig"
 			else (
@@ -1155,6 +1167,14 @@ buttonText:"SCR"
 					logLine ("  " + n.name + ": local rotation " + (n.rotation.controller.value as eulerAngles) as string + ", world X " + n.transform.row1 as string)
 					logLine ("    script: " + substituteString (substituteString n.rotation.controller.script "\n" " ") "\t" "")
 				)
+				for n in all where matchPattern n.name pattern:"*_CarRig_Susp*" do
+					logLine ("  " + n.name + ": local position " + n.position.controller.value as string + " (z is the suspension height)")
+				for n in all where matchPattern n.name pattern:"*_CarRig_Bank*" do (
+					rel = n.transform * inverse n.parent.transform
+					logLine ("  " + n.name + ": body tilt " + (rel.rotationpart as eulerAngles) as string + ", offset " + rel.row4 as string)
+				)
+				if MaxCarRig_lastBody != undefined do
+					logLine ("  body maths at frame " + MaxCarRig_lastBody[1] as string + ": forward g " + MaxCarRig_lastBody[2] as string + ", sideways g " + MaxCarRig_lastBody[3] as string + ", roll " + MaxCarRig_lastBody[4] as string + ", pitch " + MaxCarRig_lastBody[5] as string + ", ground lag rise/pitch/roll " + MaxCarRig_lastBody[6] as string + " / " + MaxCarRig_lastBody[7] as string + " / " + MaxCarRig_lastBody[8] as string)
 				for n in all where matchPattern n.name pattern:"*_CarRig_Spin*" do
 					logLine ("  " + n.name + ": world X " + n.transform.row1 as string + ", Y " + n.transform.row2 as string + ", Z " + n.transform.row3 as string)
 				messageBox "Steering check written. Press Open log and send me the Check steering lines." title:"Car Rig"
