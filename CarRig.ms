@@ -136,18 +136,25 @@ buttonText:"SCR"
 )"
 
 		-- Steering (Rotation Script). One instance drives both front wheels, so they always turn together.
+		-- The rig X axis can end up pointing out of the car rear (Per wheel mode flips it and the car with it).
+		-- If the aim is behind X, the angle is measured from -X, so steering is right either way round.
 		local steerScript = @"(
-	local d = (aimNode.pos * inverse rig.transform) - %FRONT%
-	local ang = if ((abs d.x) + (abs d.y)) < 0.001 then 0.0 else atan2 d.y d.x
+	local a = aimNode.pos * inverse rig.transform
+	local d = a - %FRONT%
+	local ang = 0.0
+	if ((abs d.x) + (abs d.y)) > 0.001 do ang = if a.x < 0 then atan2 (-d.y) (-d.x) else atan2 d.y d.x
 	(eulerAngles 0 0 (amax (-steerMax) (amin steerMax ang))) as quat
 )"
 
 		-- Body bank (Rotation Script): roll follows the steer angle. Positive Bank leans out of the turn.
 		local bankScript = @"(
-	local d = (aimNode.pos * inverse rig.transform) - %FRONT%
-	local ang = if ((abs d.x) + (abs d.y)) < 0.001 then 0.0 else atan2 d.y d.x
+	local a = aimNode.pos * inverse rig.transform
+	local d = a - %FRONT%
+	local ang = 0.0
+	local facing = if a.x < 0 then -1.0 else 1.0
+	if ((abs d.x) + (abs d.y)) > 0.001 do ang = if a.x < 0 then atan2 (-d.y) (-d.x) else atan2 d.y d.x
 	local t = if steerMax < 0.001 then 0.0 else amax (-1.0) (amin 1.0 (ang / steerMax))
-	(eulerAngles (bank * t) 0 0) as quat
+	(eulerAngles (facing * bank * t) 0 0) as quat
 )"
 
 		-- Tyre spin (Rotation Script, one per wheel): distance travelled / radius, so the tyre rolls
