@@ -1,3 +1,22 @@
+# V1 Simple Car Rig 0.12.0
+
+## New
+- Keep speed if spline changes: after Set run from speed, editing the spline re-times the Progress keys so the car keeps that speed.
+- Auto detect finds every object named CAR SURFACE (CAR SURFACE001, CAR SURFACE_02 and so on) and all meshes inside them.
+
+---
+
+## Changed
+- Set run from speed starts the run on frame 0.
+- Edits to a rig's spline or ground refresh the rig at once, instead of up to 0.2 seconds later.
+
+---
+
+## Fixed
+- A wheel over a gap between ground pieces no longer tips the car: it takes the height of the wheels that found ground.
+
+---
+
 # V1 Simple Car Rig 0.11.0
 
 ## New
