@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.1.0" width:260
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.2.0" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
@@ -209,7 +209,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.1.0"
+		local toolVersion = "0.2.0"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -495,71 +495,66 @@ buttonText:"SCR"
 			for n in extras where isValidNode n do delete n
 		)
 
-		dotNetControl lblBrand "System.Windows.Forms.Label" width:234 height:20
-		dotNetControl lblTitle "System.Windows.Forms.Label" width:234 height:30 offset:[0,-5]
-		button btnGuide "Setup guide" width:230
-		group "Car"
+		dotNetControl lblBrand "System.Windows.Forms.Label" width:514 height:20
+		dotNetControl lblTitle "System.Windows.Forms.Label" width:514 height:30 offset:[0,-5]
+		button btnGuide "Setup guide" width:514
+		group "Car and path"
 		(
-		button btnAuto "Auto detect by name" width:230
-			button btnCar "Use selection as car" width:230
-			label lblCar "No car set" align:#left
-		)
-		group "Path"
-		(
-			pickbutton pbPath "Pick spline" filter:shapeFilt autoDisplay:true width:230
+			button btnAuto "Auto detect by name" width:250 across:2
+			button btnCar "Use selection as car" width:250
+			label lblCar "No car set" align:#left across:2
+			pickbutton pbPath "Pick spline" filter:shapeFilt autoDisplay:true width:250
 		)
 		group "Mode"
 		(
-			radiobuttons rbMode labels:#("Simple: stick to spline", "Body: BOTTOM on ground", "Per wheel: fit to 4 wheels") columns:1 align:#left default:2
+			radiobuttons rbMode labels:#("Simple (spline only)", "Body (BOTTOM)", "Per wheel (4 wheels)") columns:3 align:#left default:2
 		)
 		group "Ground"
 		(
-			radiobuttons rbGround labels:#("Include list", "Exclude list") columns:2 align:#left
-			listbox lbGround height:4
-			button btnGroundAdd "Add selected" across:3 width:72
-			button btnGroundDel "Remove" width:72
-			button btnGroundClear "Clear" width:72
+			radiobuttons rbGround labels:#("Include list", "Exclude list") columns:2 align:#left across:2
 			spinner spRay "Ray start above spline" range:[0, 1e6, 200] type:#worldunits
+			listbox lbGround height:3 width:514
+			button btnGroundAdd "Add selected" across:3 width:165
+			button btnGroundDel "Remove" width:165
+			button btnGroundClear "Clear" width:165
 		)
 		group "BOTTOM"
 		(
-			button btnBottomMake "Create at car bottom" width:230
-			pickbutton pbBottom "Or pick BOTTOM" autoDisplay:true width:230
+			button btnBottomMake "Create at car bottom" width:250 across:2
+			pickbutton pbBottom "Or pick BOTTOM" autoDisplay:true width:250
 		)
 		group "Wheels (front pair steers)"
 		(
-			dropdownlist ddCentre "Wheel centre" items:#("Pivot point", "Tyre centre")
-			pickbutton pbFL "Front left wheel" autoDisplay:true width:230
-			pickbutton pbFR "Front right wheel" autoDisplay:true width:230
-			pickbutton pbRL "Rear left wheel" autoDisplay:true width:230
-			pickbutton pbRR "Rear right wheel" autoDisplay:true width:230
+			dropdownlist ddCentre "Wheel centre" items:#("Pivot point", "Tyre centre") width:250 across:2
+			dropdownlist ddFwd "Car front faces (world)" items:#("+X", "-X", "+Y", "-Y") width:250
+			pickbutton pbFL "Front left wheel" autoDisplay:true width:250 across:2
+			pickbutton pbFR "Front right wheel" autoDisplay:true width:250
+			pickbutton pbRL "Rear left wheel" autoDisplay:true width:250 across:2
+			pickbutton pbRR "Rear right wheel" autoDisplay:true width:250
 		)
 		group "Options"
 		(
-			dropdownlist ddFwd "Car front faces (world)" items:#("+X", "-X", "+Y", "-Y")
-			spinner spAhead "Look ahead" range:[0, 1e6, 100] type:#worldunits
+			spinner spAhead "Look ahead" range:[0, 1e6, 100] type:#worldunits across:3
 			spinner spSteer "Max steer (deg)" range:[0, 89, 35]
 			spinner spBank "Bank (deg)" range:[-45, 45, 3]
 		)
-		button btnBuild "Build rig" width:230 height:28
-		button btnRemove "Remove selected rig" width:230
+		button btnBuild "Build rig" width:250 height:28 across:2
+		button btnRemove "Remove selected rig" width:250 height:28
 		group "Bake"
 		(
-			radiobuttons rbBakeRange labels:#("Timeline", "Custom range") columns:2 align:#left
-			spinner spBakeFrom "From frame" type:#integer range:[-100000, 100000, 0] enabled:false across:2 width:105
-			spinner spBakeTo "To" type:#integer range:[-100000, 100000, 100] enabled:false width:80
-			button btnBake "Bake selected rig to keys" width:230
+			radiobuttons rbBakeRange labels:#("Timeline", "Custom range") columns:2 align:#left across:3
+			spinner spBakeFrom "From frame" type:#integer range:[-100000, 100000, 0] enabled:false
+			spinner spBakeTo "To" type:#integer range:[-100000, 100000, 100] enabled:false
+			button btnBake "Bake selected rig to keys" width:514
 		)
-		button btnCheck "Check steering (selected rig)" width:230
-		button btnSpeed "Speed test (selected rig)" width:230
-		button btnLog "Open log" width:230
+		button btnCheck "Check steering (selected rig)" width:165 across:3
+		button btnSpeed "Speed test (selected rig)" width:165
+		button btnLog "Open log" width:165
 		group "About"
 		(
 			label lblA0 "(c) 2026 Visualisation One. All rights reserved." align:#left
-			label lblA1 "Provided \"as is\", without warranty. To the" align:#left
-			label lblA2 "extent permitted by law, the authors are" align:#left
-			label lblA3 "not liable for any loss or damage from" align:#left
-			label lblA4 "using it. Back up your work." align:#left
+			label lblA1 "Provided \"as is\", without warranty. To the extent permitted by law, the authors are" align:#left
+			label lblA2 "not liable for any loss or damage from using it. Back up your work." align:#left
 		)
 
 		fn refreshUI = (
