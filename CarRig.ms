@@ -17,6 +17,8 @@ buttonText:"SCR"
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
+		-- RadioButtons cannot read their labels back, so the log uses these.
+		local modeNames = #("Simple", "Body", "Per wheel"), groundNames = #("Include list", "Exclude list")
 
 		-- The controller scripts below live in the scene file, so a rigged scene keeps
 		-- working on a PC without this tool.
@@ -412,10 +414,10 @@ buttonText:"SCR"
 			refreshUI()
 		)
 		on rbMode changed s do (
-			logLine ("Mode " + rbMode.labels[s])
+			logLine ("Mode " + modeNames[s])
 			refreshUI()
 		)
-		on rbGround changed s do logLine ("Ground " + rbGround.labels[s])
+		on rbGround changed s do logLine ("Ground " + groundNames[s])
 
 		on btnCar pressed do (
 			carNodes = for o in selection collect o
@@ -512,7 +514,7 @@ buttonText:"SCR"
 				(mode == 3 and picked.count < 4): "Per wheel mode needs all four wheels."
 				default: undefined
 			)
-			logLine ("Build pressed. Mode " + rbMode.labels[mode] + ", ground " + rbGround.labels[rbGround.state] + \
+			logLine ("Build pressed. Mode " + modeNames[mode] + ", ground " + groundNames[rbGround.state] + \
 				", front " + ddFwd.selected + ", centre " + ddCentre.selected + ", ray " + spRay.value as string + \
 				", ahead " + spAhead.value as string + ", steer " + spSteer.value as string + ", bank " + spBank.value as string)
 			logLine ("  car: " + names carNodes)
