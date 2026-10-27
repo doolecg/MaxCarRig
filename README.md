@@ -17,7 +17,7 @@ That's it. The car now follows the spline from start to end over the active time
 | Capability | What you get |
 | --- | --- |
 | Auto detect by name | Finds FRONT_LEFT, FRONT_RIGHT, BACK_LEFT, BACK_RIGHT (or REAR_), BODY, CAR PATH and CAR SURFACE in the scene, and makes a BOTTOM helper. Spaces, dashes and case do not matter. |
-| Bake to keys | Records the rig as plain keys on every frame for lag-free playback. The Car Rig modifier stops driving the car afterwards; build again to change it. |
+| Bake a copy | Makes instance copies of the car keyed on every frame, on their own `<rig>_Baked` layer, and hides the live rig for lag-free playback. Unhide the rig to change it and bake again. |
 | Spline follow | The car rides the spline at constant speed. Progress % on the rig's Car Rig modifier is keyed 0 to 100 over the timeline; re-key it to change timing. |
 | Simple mode | The car just rides the spline, pitched along it, at the BOTTOM height. No ground, steering or bank. |
 | Body mode | Rays go down from the BOTTOM helper; the car sits on the hit point, tilted to the surface. |

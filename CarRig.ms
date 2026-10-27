@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.2.0" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.3.0" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
@@ -209,7 +209,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.2.0"
+		local toolVersion = "0.3.0"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -545,7 +545,7 @@ buttonText:"SCR"
 			radiobuttons rbBakeRange labels:#("Timeline", "Custom range") columns:2 align:#left across:3
 			spinner spBakeFrom "From frame" type:#integer range:[-100000, 100000, 0] enabled:false
 			spinner spBakeTo "To" type:#integer range:[-100000, 100000, 100] enabled:false
-			button btnBake "Bake selected rig to keys" width:514
+			button btnBake "Bake a copy of the selected rig" width:514
 		)
 		button btnCheck "Check steering (selected rig)" width:165 across:3
 		button btnSpeed "Speed test (selected rig)" width:165
@@ -614,8 +614,8 @@ buttonText:"SCR"
 			"5. Press Build rig.\n\n" + \
 			"6. Select the rig rectangle. The Car Rig modifier sets\n" + \
 			"    Progress, Look ahead, Max steer, Bank, Tyre spin and Reverse.\n\n" + \
-			"7. For smooth playback, press Bake selected rig to keys.\n" + \
-			"    Esc cancels. Build again to change the rig after baking.\n\n" + \
+			"7. For smooth playback, press Bake a copy of the selected rig.\n" + \
+			"    The copy gets its own layer and the rig is hidden. Esc cancels.\n\n" + \
 			"8. To take the rig off, select it and press Remove selected rig.\n\n" + \
 			"Something wrong? Press Open log and send the log.") title:("V1 Simple Car Rig " + toolVersion + " - Setup guide")
 
@@ -674,56 +674,71 @@ buttonText:"SCR"
 			messageBox ("Found:\n" + listText found + (if missing.count > 0 then ("\n\nNot found: " + listText missing) else "")) title:"Car Rig"
 		)
 
-		-- Records every scripted rig node as plain keys on every frame and removes the scripts, so playback
-		-- costs nothing. The Car Rig modifier stops driving the car after this; build again to change it.
+		-- Bakes a copy: instance copies of every car part (geometry shared, so they stay light), keyed on every
+		-- frame of the range, on their own layer. The live rig is left as it was and hidden, so its scripts cost
+		-- nothing during playback. Unhide it to change things and bake again.
 		on btnBake pressed do (
-			local root, all, nodes, h, aimH, samples, i, k, f, frames, cancelled, fromT, toT
+			local root, all, parts, srcs, copies, depths, order, d, maxD, i, k, f, frames, cancelled, fromT, toT, lay, layerName, h, aimH, n
 			root = (for o in selection where getUserProp o "MaxCarRig" == true collect o)[1]
 			if root == undefined then messageBox "Select a rig first (the ..._CarRig rectangle)." title:"Car Rig"
-			else if queryBox "Bake this rig to keys on every frame?\n\nPlayback gets fast, but the Car Rig modifier controls stop working. Undo, or build again, to go back." title:"Car Rig" do (
+			else if queryBox "Bake a copy of this car to keys on every frame?\n\nThe copy goes on its own layer and the live rig is hidden. Unhide the rig to change it and bake again." title:"Car Rig" do (
 				all = withDescendants #(root)
 				h = getUserProp root "MaxCarRig_aim"
 				aimH = if h == undefined then undefined else maxOps.getNodeByHandle h
-				-- Parents before children (withDescendants is breadth first), so each key lands in the right space.
-				nodes = #(root)
-				if isValidNode aimH do append nodes aimH
-				for n in all where getUserProp n "MaxCarRig_helper" == true do append nodes n
-				frames = #()
-				-- Outside a custom range the car holds its first and last baked positions.
+				-- Car parts only: no rig root, rig helpers or BOTTOM marker.
+				parts = for n in all where n != root and getUserProp n "MaxCarRig_helper" != true and not matchPattern n.name pattern:"CarRig_BOTTOM*" collect n
+				-- Outside a custom range the copy holds its first and last baked positions.
 				fromT = if rbBakeRange.state == 2 then (amin spBakeFrom.value spBakeTo.value) as time else animationRange.start
 				toT = if rbBakeRange.state == 2 then (amax spBakeFrom.value spBakeTo.value) as time else animationRange.end
+				frames = #()
 				for f = fromT to toT do append frames f
-				-- Max's status-bar progress bar: first half reads every frame, second half writes the keys.
-				-- Cancel while reading changes nothing; cancel while writing is rolled back with undo.
-				samples = for i = 1 to nodes.count collect #()
+
 				cancelled = false
 				-- Esc cancels like the Cancel button. Max's own Esc interrupt is off meanwhile: it would stop the
-				-- script mid-bake and skip the clean-up below, leaving half-written keys.
+				-- script mid-bake and skip the clean-up below, leaving a half-made copy.
 				escapeEnable = false
-				progressStart "Baking car rig (Esc or Cancel to stop)"
-				for k = 1 to frames.count while not cancelled do (
-					for i = 1 to nodes.count do append samples[i] (at time frames[k] nodes[i].transform)
-					if not (progressUpdate (50.0 * k / frames.count)) or keyboard.escPressed do cancelled = true
-				)
-				if not cancelled do (
-					undo "Bake car rig" on (
-						for i = 1 to nodes.count do nodes[i].transform.controller = prs()
-						with animate on (
-							for k = 1 to frames.count while not cancelled do (
-								for i = 1 to nodes.count do at time frames[k] nodes[i].transform = samples[i][k]
-								if not (progressUpdate (50.0 + 50.0 * k / frames.count)) or keyboard.escPressed do cancelled = true
-							)
+				progressStart "Baking car copy (Esc or Cancel to stop)"
+				undo "Bake car copy" on (
+					srcs = #()
+					copies = #()
+					maxOps.cloneNodes parts cloneType:#instance actualNodeList:&srcs newNodes:&copies
+					layerName = root.name + "_Baked"
+					lay = LayerManager.getLayerFromName layerName
+					if lay == undefined do lay = LayerManager.newLayerFromName layerName
+					for i = 1 to copies.count do (
+						copies[i].name = uniqueName (srcs[i].name + "_baked")
+						-- A copy whose parent was not copied (a rig helper) would still follow the rig: unlink it.
+						if copies[i].parent != undefined and findItem copies copies[i].parent == 0 do copies[i].parent = undefined
+						copies[i].transform.controller = prs()
+						lay.addNode copies[i]
+					)
+					-- Key parents before children, so each child's key lands relative to an already-keyed parent.
+					depths = for c in copies collect (
+						d = 0
+						n = c.parent
+						while n != undefined do (d += 1; n = n.parent)
+						d
+					)
+					maxD = 0
+					for d in depths do maxD = amax maxD d
+					order = #()
+					for d = 0 to maxD do for i = 1 to copies.count where depths[i] == d do append order i
+					with animate on (
+						for k = 1 to frames.count while not cancelled do (
+							for i in order do at time frames[k] copies[i].transform = (at time frames[k] srcs[i].transform)
+							if not (progressUpdate (100.0 * k / frames.count)) or keyboard.escPressed do cancelled = true
 						)
 					)
-					if cancelled do max undo
+					if not cancelled do (
+						for n in all do n.isHidden = true
+						if isValidNode aimH do aimH.isHidden = true
+					)
 				)
+				if cancelled do max undo
 				progressEnd()
 				escapeEnable = true
 				if cancelled then logLine ("Bake of " + root.name + " cancelled; nothing changed")
-				else (
-					setUserProp root "MaxCarRig_baked" true
-					logLine ("Baked " + root.name + ": " + nodes.count as string + " nodes, frames " + fromT as string + " to " + toT as string)
-				)
+				else logLine ("Baked a copy of " + root.name + ": " + copies.count as string + " parts on layer " + layerName + ", frames " + fromT as string + " to " + toT as string + ". Live rig hidden.")
 			)
 		)
 
