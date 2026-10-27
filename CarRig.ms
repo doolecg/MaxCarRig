@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.11.0" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.11.1" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
@@ -298,7 +298,7 @@ buttonText:"SCR"
 	local grounds = #(%GROUNDS%)
 	local offs = #(%OFFSETS%)
 	-- All locals up front: Max throws a Bad free thunk error for locals declared in a nested block and read in a loop.
-	local u, p, fwd, y, h, up, guess, hits, w, x, tm, mid, offMid, sa
+	local u, p, fwd, y, h, up, guess, hits, w, x, tm, mid, offMid, sa, missed, nh, zs, i
 	%RAYFNS%
 	%SPLINEFNS%
 	fn frameFrom x z pos =
@@ -335,12 +335,20 @@ buttonText:"SCR"
 		(
 			guess = frameFrom (normalize [fwd.x, fwd.y, 0]) [0,0,1] p
 			hits = #()
+			missed = #()
 			for o in offs do
 			(
 				w = o * guess
 				h = castDown grounds w rayUp
 				append hits (if h == undefined then w else h.pos)
+				append missed (h == undefined)
 			)
+			-- A wheel over a gap (no ground under it) takes the average height of the wheels that did find
+			-- ground, so the car stays level instead of tipping towards the spline height.
+			nh = 0
+			zs = 0.0
+			for i = 1 to hits.count where not missed[i] do (zs += hits[i].z; nh += 1)
+			if nh > 0 do for i = 1 to hits.count where missed[i] do hits[i] = [hits[i].x, hits[i].y, zs / nh]
 			-- Wheel order is FL, FR, RL, RR: front minus rear is forward, left minus right is left.
 			x = (hits[1] + hits[2]) - (hits[3] + hits[4])
 			y = (hits[1] + hits[3]) - (hits[2] + hits[4])
@@ -809,7 +817,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.11.0"
+		local toolVersion = "0.11.1"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -1320,7 +1328,7 @@ ca.metre = units.decodeValue "1m"
 			"Something wrong? Press Open log and send the log.") title:("V1 Simple Car Rig " + toolVersion + " - Setup guide")
 
 		on btnAuto pressed do (
-			local body, w, surf, found = #(), missing = #(), i
+			local body, w, surf, surfs, found = #(), missing = #(), i
 			local pbs = #(pbFL, pbFR, pbRL, pbRR), cornerNames = #("FL", "FR", "RL", "RR")
 			local wheelTags = #( \
 				#("FRONT_LEFT", "FL", "LEFT_FRONT", "WHEEL_FL", "FRONT_LEFT_WHEEL"), \
@@ -1351,11 +1359,13 @@ ca.metre = units.decodeValue "1m"
 				append found ("path " + w.name)
 			) else append missing "CAR PATH"
 
-			surf = findTagged #("CAR_SURFACE", "SURFACE")
-			if surf != undefined then (
-				groundList = for g in withDescendants #(surf) where geoFilt g collect g
+			-- Every object named CAR SURFACE..., CAR SURFACE001, CAR SURFACE_02 and so on, plus everything inside them.
+			surfs = for n in objects where matchPattern (tagOf n) pattern:"CAR_SURFACE*" or tagOf n == "SURFACE" collect n
+			if surfs.count > 0 then (
+				groundList = #()
+				for g in withDescendants surfs where geoFilt g and findItem groundList g == 0 do append groundList g
 				rbGround.state = 1
-				append found ("ground " + surf.name + " (" + groundList.count as string + " objects)")
+				append found ("ground " + names surfs + " (" + groundList.count as string + " meshes)")
 			) else append missing "CAR SURFACE"
 
 			-- BOTTOM is looked up by the tool's own helper name only: cars often have a mesh called "bottom".
