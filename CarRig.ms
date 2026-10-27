@@ -649,7 +649,7 @@ buttonText:"SCR"
 		-- Records every scripted rig node as plain keys on every frame and removes the scripts, so playback
 		-- costs nothing. The Car Rig modifier stops driving the car after this; build again to change it.
 		on btnBake pressed do (
-			local root, all, nodes, h, aimH, samples, row, i, k, f, frames
+			local root, all, nodes, h, aimH, samples, i, k, f, frames, cancelled
 			root = (for o in selection where getUserProp o "MaxCarRig" == true collect o)[1]
 			if root == undefined then messageBox "Select a rig first (the ..._CarRig rectangle)." title:"Car Rig"
 			else if queryBox "Bake this rig to keys on every frame?\n\nPlayback gets fast, but the Car Rig modifier controls stop working. Undo, or build again, to go back." title:"Car Rig" do (
@@ -662,21 +662,33 @@ buttonText:"SCR"
 				for n in all where getUserProp n "MaxCarRig_helper" == true do append nodes n
 				frames = #()
 				for f = animationRange.start to animationRange.end do append frames f
-				samples = #()
-				for i = 1 to nodes.count do (
-					row = #()
-					for k = 1 to frames.count do append row (at time frames[k] nodes[i].transform)
-					append samples row
+				-- Max's status-bar progress bar: first half reads every frame, second half writes the keys.
+				-- Cancel while reading changes nothing; cancel while writing is rolled back with undo.
+				samples = for i = 1 to nodes.count collect #()
+				cancelled = false
+				progressStart "Baking car rig"
+				for k = 1 to frames.count while not cancelled do (
+					for i = 1 to nodes.count do append samples[i] (at time frames[k] nodes[i].transform)
+					if not (progressUpdate (50.0 * k / frames.count)) do cancelled = true
 				)
-				undo "Bake car rig" on (
-					for i = 1 to nodes.count do nodes[i].transform.controller = prs()
-					with animate on (
-						for i = 1 to nodes.count do
-							for k = 1 to frames.count do at time frames[k] nodes[i].transform = samples[i][k]
+				if not cancelled do (
+					undo "Bake car rig" on (
+						for i = 1 to nodes.count do nodes[i].transform.controller = prs()
+						with animate on (
+							for k = 1 to frames.count while not cancelled do (
+								for i = 1 to nodes.count do at time frames[k] nodes[i].transform = samples[i][k]
+								if not (progressUpdate (50.0 + 50.0 * k / frames.count)) do cancelled = true
+							)
+						)
 					)
+					if cancelled do max undo
 				)
-				setUserProp root "MaxCarRig_baked" true
-				logLine ("Baked " + root.name + ": " + nodes.count as string + " nodes over " + frames.count as string + " frames")
+				progressEnd()
+				if cancelled then logLine ("Bake of " + root.name + " cancelled; nothing changed")
+				else (
+					setUserProp root "MaxCarRig_baked" true
+					logLine ("Baked " + root.name + ": " + nodes.count as string + " nodes over " + frames.count as string + " frames")
+				)
 			)
 		)
 
