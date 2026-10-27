@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.8.2" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.9.0" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
@@ -81,6 +81,78 @@ buttonText:"SCR"
 		)
 		tab
 	)
+	-- Corner slowdown: re-times travel along the spline so the car spends longer in bends and makes it up on
+	-- straights; start and finish stay where the Progress keys put them. Bend sharpness is averaged over the
+	-- brake distance either side, so the car slows before a bend and picks up after it.
+	global MaxCarRig_warps
+	fn warpTable sp amt radius brake =
+	(
+		local tab, w, e, i, n, pts, lens, tans, kap, ks, sum, lo, hi, a, b, d, wt, tsum
+		tab = splineTable sp
+		if MaxCarRig_warps == undefined do MaxCarRig_warps = #()
+		for e in MaxCarRig_warps where e[1] == sp and e[6] == tab[3] and e[7] == tab[1].count and e[2] == amt and e[3] == radius and e[4] == brake do w = e[5]
+		if w == undefined do
+		(
+			pts = tab[1]
+			lens = tab[2]
+			tans = tab[4]
+			n = pts.count
+			kap = #()
+			for i = 1 to n do
+			(
+				a = tans[amax 1 (i - 1)] * [1, 1, 0]
+				b = tans[amin n (i + 1)] * [1, 1, 0]
+				d = lens[amin n (i + 1)] - lens[amax 1 (i - 1)]
+				append kap (if d < 0.0001 or (length a) < 0.0001 or (length b) < 0.0001 then 0.0 else (acos (amax (-1.0) (amin 1.0 (dot (normalize a) (normalize b))))) * pi / 180.0 / d)
+			)
+			ks = #()
+			lo = 1
+			hi = 1
+			sum = 0.0
+			for i = 1 to n do
+			(
+				while hi <= n and lens[hi] <= lens[i] + brake do (sum += kap[hi]; hi += 1)
+				while lens[lo] < lens[i] - brake do (sum -= kap[lo]; lo += 1)
+				append ks (sum / (amax 1 (hi - lo)))
+			)
+			w = #(0.0)
+			tsum = 0.0
+			for i = 2 to n do
+			(
+				wt = 1.0 / (1.0 + amt * radius * (ks[i] + ks[i - 1]) / 2.0)
+				tsum += (lens[i] - lens[i - 1]) / wt
+				append w tsum
+			)
+			for i = 1 to n do w[i] = w[i] / (amax 0.0001 tsum)
+			append MaxCarRig_warps #(sp, amt, radius, brake, w, tab[3], tab[1].count)
+			if MaxCarRig_warps.count > 8 do deleteItem MaxCarRig_warps 1
+		)
+		w
+	)
+	fn warpQ sp q useIt amt radius brake =
+	(
+		local tab, w, lo, hi, mid, a, base
+		if not useIt or amt <= 0.0 then q
+		else
+		(
+			base = floor q
+			q = q - base
+			tab = splineTable sp
+			w = warpTable sp amt radius brake
+			lo = 1
+			hi = w.count
+			while hi - lo > 1 do
+			(
+				mid = (lo + hi) / 2
+				if w[mid] <= q then lo = mid else hi = mid
+			)
+			a = if w[hi] > w[lo] then (q - w[lo]) / (w[hi] - w[lo]) else 0.0
+			base + (tab[2][lo] + (tab[2][hi] - tab[2][lo]) * a) / tab[3]
+		)
+	)
+	-- Travelled fraction (0 to 1) for a Progress fraction, with corner slowdown when it is on.
+	fn travelQ sp q rev useIt amt radius brake =
+		if rev then 1.0 - (warpQ sp (1.0 - q) useIt amt radius brake) else warpQ sp q useIt amt radius brake
 	fn splineAt sp f =
 	(
 		local tab, pts, lens, target, lo, hi, mid, a
@@ -166,7 +238,7 @@ buttonText:"SCR"
 		local y = normalize (cross z x)
 		matrix3 (cross y z) y z pos
 	)
-	u = progress / 100.0
+	u = travelQ sp (progress / 100.0) rigCA.reverse rigCA.cornerSlow rigCA.cornerAmount rigCA.cornerRadius rigCA.cornerBrake
 	if rigCA.reverse do u = 1.0 - u
 	u = if isClosed sp 1 then (mod ((mod u 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 u))
 	sa = splineAt sp u
@@ -218,7 +290,8 @@ buttonText:"SCR"
 	%SPLINEFNS%
 	local len = (splineTable sp)[3]
 	local a = if len < 0.001 then 0.0 else ahead / len
-	local u = if rigCA.reverse then 1.0 - progress / 100.0 - a else progress / 100.0 + a
+	local u = (travelQ sp (progress / 100.0) rigCA.reverse rigCA.cornerSlow rigCA.cornerAmount rigCA.cornerRadius rigCA.cornerBrake)
+	u = if rigCA.reverse then 1.0 - u - a else u + a
 	u = if isClosed sp 1 then (mod ((mod u 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 u))
 	(splineAt sp u)[1]
 )"
@@ -233,7 +306,7 @@ buttonText:"SCR"
 	fn wrapU sp x = if isClosed sp 1 then (mod ((mod x 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 x))
 	len = (splineTable sp)[3]
 	s = if rigCA.reverse then -1.0 else 1.0
-	u = progress / 100.0
+	u = travelQ sp (progress / 100.0) rigCA.reverse rigCA.cornerSlow rigCA.cornerAmount rigCA.cornerRadius rigCA.cornerBrake
 	if rigCA.reverse do u = 1.0 - u
 	uf = wrapU sp (u + s * %FRONTDIST% / len)
 	ua = wrapU sp (u + s * ahead / len)
@@ -269,7 +342,7 @@ buttonText:"SCR"
 	nP = (amin 30 (ceil (2.0 * sigP))) as integer
 	nMax = amax nB nP
 	-- prog[k + nMax + 2] is the travelled fraction at frame F + k
-	for k = -(nMax + 1) to nMax + 1 do append prog ((at time ((F + k) as time) progCtrl.value) / 100.0)
+	for k = -(nMax + 1) to nMax + 1 do append prog (travelQ sp ((at time ((F + k) as time) progCtrl.value) / 100.0) rigCA.reverse rigCA.cornerSlow rigCA.cornerAmount rigCA.cornerRadius rigCA.cornerBrake)
 	-- bends are measured over 1 m either side
 	delta = metre / len
 	for k = -nMax to nMax do
@@ -316,7 +389,7 @@ buttonText:"SCR"
 		(
 			tk = (F - i) as time
 			j = at time tk rig.transform
-			uk = (at time tk progCtrl.value) / 100.0
+			uk = travelQ sp ((at time tk progCtrl.value) / 100.0) rigCA.reverse rigCA.cornerSlow rigCA.cornerAmount rigCA.cornerRadius rigCA.cornerBrake
 			if rigCA.reverse do uk = 1.0 - uk
 			pk = (splineAt sp (wrapU sp uk))[1]
 			w = exp (-(i as float) / rigCA.bodyLag)
@@ -372,12 +445,12 @@ buttonText:"SCR"
 		-- that points across the car (%AXIS%), so a wheel spins about its own axle.
 		local spinScript = @"(
 	%SPLINEFNS%
-	local dist = progress / 100.0 * (splineTable sp)[3]
+	local dist = (travelQ sp (progress / 100.0) rigCA.reverse rigCA.cornerSlow rigCA.cornerAmount rigCA.cornerRadius rigCA.cornerBrake) * (splineTable sp)[3]
 	((%AXIS% (%SIGN% * spin * dist / %RADIUS% * 180.0 / pi)) * %BASE%) as quat
 )"
 
 		-- The controls on the rig's "Car Rig" modifier. All are animatable.
-		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4f98)
+		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4f99)
 		(
 			parameters main rollout:params
 			(
@@ -396,6 +469,10 @@ buttonText:"SCR"
 				suspension type:#float ui:spSusp default:1.0
 				travel type:#worldUnits ui:spTravel default:100.0
 				realistic type:#boolean ui:cbRealistic default:true
+				cornerSlow type:#boolean ui:cbCorner default:false
+				cornerAmount type:#float ui:spCornerAmt default:0.5
+				cornerRadius type:#worldUnits ui:spCornerRad default:20000.0
+				cornerBrake type:#worldUnits ui:spCornerBrake default:15000.0
 				bodyFollow type:#float ui:spFollow default:0.6
 				bodyLag type:#float ui:spLag default:4.0
 			)
@@ -428,6 +505,13 @@ buttonText:"SCR"
 					spinner spTravel "Travel" type:#worldunits range:[0, 1e6, 100] fieldwidth:56
 					spinner spRay "Ray height" type:#worldunits range:[0, 1e6, 200] fieldwidth:56
 				)
+				group "Corner slowdown"
+				(
+					checkbox cbCorner "Slow on corners"
+					spinner spCornerAmt "Amount" range:[0, 1, 0.5] fieldwidth:56
+					spinner spCornerRad "Tight radius" type:#worldunits range:[0, 1e9, 20000] fieldwidth:56
+					spinner spCornerBrake "Brake dist" type:#worldunits range:[0, 1e9, 15000] fieldwidth:56
+				)
 				group "Body"
 				(
 					checkbox cbRealistic "Realistic motion"
@@ -437,7 +521,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.8.2"
+		local toolVersion = "0.9.0"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -591,6 +675,8 @@ buttonText:"SCR"
 			ca.steerMax = steerMax
 			ca.bank = bank
 			ca.rayUp = rayUp
+			ca.cornerRadius = units.decodeValue "20m"
+			ca.cornerBrake = units.decodeValue "15m"
 			-- Progress runs 0 to 100 over the active time range on linear keys, so the speed is constant.
 			with animate on (
 				at time animationRange.start ca.progress = 0.0
@@ -687,6 +773,7 @@ buttonText:"SCR"
 					spc.AddNode "sp" path
 					spc.AddTarget "progress" ca[#progress].controller
 					spc.AddTarget "spin" ca[#spin].controller
+					spc.AddObject "rigCA" ca
 					s = substituteString spinScript "%RADIUS%" ((amax 0.001 (wheelRadius wheels[i])) as string)
 					s = substituteString s "%AXIS%" axisNames[axisK]
 					s = substituteString s "%SIGN%" (axisSign as string)
@@ -1323,7 +1410,7 @@ buttonText:"SCR"
 				else (
 					-- Keep every modifier setting: animated ones as a copy of their controller (keys included).
 					ca = rigParams root
-					names = #(#progress, #lookAhead, #steerMax, #bank, #rayUp, #spin, #suspension, #travel, #diveSquat, #bankTime, #pitchTime, #bodyFollow, #bodyLag, #reverse, #realistic)
+					names = #(#progress, #lookAhead, #steerMax, #bank, #rayUp, #spin, #suspension, #travel, #diveSquat, #bankTime, #pitchTime, #bodyFollow, #bodyLag, #reverse, #realistic, #maxBank, #maxPitch, #cornerSlow, #cornerAmount, #cornerRadius, #cornerBrake)
 					saved = #()
 					for n in names do (
 						c = try (ca[n].controller) catch (undefined)
