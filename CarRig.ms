@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig" width:260
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.1.0" width:260
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
@@ -182,10 +182,13 @@ buttonText:"SCR"
 			)
 		)
 
-		-- Visualisation One brand colours, from visualisation.one: charcoal ink on cream.
-		-- Their typeface (ABC Arizona) is not free to ship, so the header uses Georgia, a serif on every Windows PC.
-		fn dnColour c = (dotNetClass "System.Drawing.Color").FromArgb c.r c.g c.b
-		local v1Ink = color 55 50 47, v1Cream = color 243 240 237
+		local toolVersion = "0.1.0"
+		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
+		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
+		fn uiColour key = (
+			local p = (colorMan.getColor key) * 255
+			(dotNetClass "System.Drawing.Color").FromArgb (p.x as integer) (p.y as integer) (p.z as integer)
+		)
 
 		fn shapeFilt o = superClassOf o == Shape
 		fn geoFilt o = superClassOf o == GeometryClass
@@ -494,7 +497,7 @@ buttonText:"SCR"
 			spinner spSteer "Max steer (deg)" range:[0, 89, 35]
 			spinner spBank "Bank (deg)" range:[-45, 45, 3]
 		)
-		dotNetControl btnBuild "System.Windows.Forms.Button" width:230 height:32
+		button btnBuild "Build rig" width:230 height:28
 		button btnRemove "Remove selected rig" width:230
 		button btnSpeed "Speed test (selected rig)" width:230
 		button btnLog "Open log" width:230
@@ -516,21 +519,15 @@ buttonText:"SCR"
 
 		on MaxCarRig_UI open do (
 			local fontStyle = dotNetClass "System.Drawing.FontStyle"
-			lblBrand.BackColor = dnColour v1Cream
-			lblBrand.ForeColor = dnColour v1Ink
+			for l in #(lblBrand, lblTitle) do (
+				l.BackColor = uiColour #background
+				l.ForeColor = uiColour #text
+			)
 			lblBrand.Font = dotNetObject "System.Drawing.Font" "Georgia" 8 fontStyle.Regular
-			lblBrand.Text = "VISUALISATION ONE"
-			lblTitle.BackColor = dnColour v1Cream
-			lblTitle.ForeColor = dnColour v1Ink
+			lblBrand.Text = "VISUALISATION ONE      v" + toolVersion
 			lblTitle.Font = dotNetObject "System.Drawing.Font" "Georgia" 15 fontStyle.Regular
 			lblTitle.Text = "Simple Car Rig"
-			btnBuild.Text = "Build rig"
-			btnBuild.FlatStyle = (dotNetClass "System.Windows.Forms.FlatStyle").Flat
-			btnBuild.FlatAppearance.BorderSize = 0
-			btnBuild.BackColor = dnColour v1Ink
-			btnBuild.ForeColor = dnColour v1Cream
-			btnBuild.Font = dotNetObject "System.Drawing.Font" "Georgia" 11 fontStyle.Regular
-			logLine ("Opened. Max version " + ((maxVersion())[1] as string) + ", log: " + logPath)
+			logLine ("Opened tool v" + toolVersion + ". Max version " + ((maxVersion())[1] as string) + ", log: " + logPath)
 			refreshUI()
 		)
 		on rbMode changed s do (
@@ -652,8 +649,8 @@ buttonText:"SCR"
 		on pbRL picked o do (wheelNodes[3] = partOf o; pbRL.object = wheelNodes[3]; logLine ("Wheel RL: picked " + o.name + ", using " + wheelNodes[3].name))
 		on pbRR picked o do (wheelNodes[4] = partOf o; pbRR.object = wheelNodes[4]; logLine ("Wheel RR: picked " + o.name + ", using " + wheelNodes[4].name))
 
-		on btnBuild click do (
-			local pivotGap, fc, rc, dirv, fwdUse
+		on btnBuild pressed do (
+			local pivotGap, fc, rc, dirv, fwdUse, tyre
 			local mode = rbMode.state
 			carNodes = for n in carNodes where isValidNode n collect n
 			groundList = for n in groundList where isValidNode n collect n
@@ -692,6 +689,10 @@ buttonText:"SCR"
 			logLine ("  grounds used: " + names grounds)
 			logLine ("  path: " + (if isValidNode pathShape then pathShape.name else "-") + ", BOTTOM: " + (if isValidNode bottomNode then bottomNode.name else "-"))
 			logLine ("  wheels FL FR RL RR: " + names wheels)
+			for w in wheels where isValidNode w do (
+				tyre = tyreOf w
+				logLine ("  " + w.name + ": tyre mesh " + tyre.name + ", tyre centre " + (wheelCentre w false) as string + ", radius " + (wheelRadius w) as string + 					", pivot " + w.pos as string + ", parts " + names (withDescendants #(w)))
+			)
 			for w in wheels where isValidNode w do (
 				pivotGap = distance w.pos ((w.min + w.max) / 2)
 				if pivotGap > (w.max.z - w.min.z) * 0.25 do
@@ -738,7 +739,7 @@ buttonText:"SCR"
 
 	on execute do (
 		try (destroyDialog MaxCarRig_UI) catch ()
-		try (createDialog MaxCarRig_UI bgcolor:(color 243 240 237) fgcolor:(color 55 50 47)) catch (createDialog MaxCarRig_UI)
+		createDialog MaxCarRig_UI
 	)
 )
 
