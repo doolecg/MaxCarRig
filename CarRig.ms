@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.3.0" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.4.0" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
@@ -22,15 +22,8 @@ buttonText:"SCR"
 		-- The controller scripts below live in the scene file, so a rigged scene keeps
 		-- working on a PC without this tool.
 
-		-- Rig root (Transform Script). Mode 1 = simple, 2 = body, 3 = per wheel.
-		-- sp is the spline; progress and rayUp come from the Car Rig modifier.
-		local rootScript = @"(
-	local mode = %MODE%
-	local grounds = #(%GROUNDS%)
-	local offs = #(%OFFSETS%)
-	-- All locals up front: Max throws a Bad free thunk error for locals declared in a nested block and read in a loop.
-	local u, p, fwd, y, h, up, guess, hits, w, x, tm, mid, offMid
-	-- Ray tests use a voxel grid per ground object (RayMeshGridIntersect), built once and kept
+		-- Ground ray functions shared by the rig root and the suspension scripts (pasted in at build).
+		local rayFns = @"-- Ray tests use a voxel grid per ground object (RayMeshGridIntersect), built once and kept
 	-- in a global; plain intersectRay tests every face on every frame and makes playback lag.
 	-- A grid is rebuilt when its object moves or its face count changes.
 	global MaxCarRig_grids
@@ -74,7 +67,17 @@ buttonText:"SCR"
 			)
 		)
 		best
-	)
+	)"
+
+		-- Rig root (Transform Script). Mode 1 = simple, 2 = body, 3 = per wheel.
+		-- sp is the spline; progress and rayUp come from the Car Rig modifier.
+		local rootScript = @"(
+	local mode = %MODE%
+	local grounds = #(%GROUNDS%)
+	local offs = #(%OFFSETS%)
+	-- All locals up front: Max throws a Bad free thunk error for locals declared in a nested block and read in a loop.
+	local u, p, fwd, y, h, up, guess, hits, w, x, tm, mid, offMid
+	%RAYFNS%
 	fn frameFrom x z pos =
 	(
 		local y = normalize (cross z x)
@@ -175,6 +178,24 @@ buttonText:"SCR"
 	(eulerAngles (bank * k) 0 0) as quat
 )"
 
+		-- Suspension (Position Script, one per wheel): a ray under the wheel's contact point; the wheel moves
+		-- along the rig's up axis by how far the ground there is above or below the body's plane, up to Travel,
+		-- scaled by Suspension (0 = off, 1 = full).
+		local suspScript = @"(
+	local grounds = #(%GROUNDS%)
+	local rest = %REST%
+	local contact = %CONTACT%
+	local tm, c, h, dz
+	%RAYFNS%
+	tm = rig.transform
+	c = contact * tm
+	h = castDown grounds c rayUp
+	dz = 0.0
+	if h != undefined do dz = dot (h.pos - c) (normalize tm.row3)
+	dz = suspension * (amax (-travel) (amin travel dz))
+	rest + [0, 0, dz]
+)"
+
 		-- Tyre spin (Rotation Script, one per wheel): distance travelled / radius, so the tyre rolls
 		-- without sliding. spin scales it: 1 = rolling, 0 = stopped, more = wheelspin.
 		-- The helper carries the wheel pivot's own orientation (%BASE%) and spins about the pivot axis
@@ -185,7 +206,7 @@ buttonText:"SCR"
 )"
 
 		-- The controls on the rig's "Car Rig" modifier. All are animatable.
-		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4f93)
+		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4f94)
 		(
 			parameters main rollout:params
 			(
@@ -196,6 +217,8 @@ buttonText:"SCR"
 				rayUp type:#worldUnits ui:spRay default:200.0
 				reverse type:#boolean ui:cbReverse default:false
 				spin type:#float ui:spSpin default:1.0
+				suspension type:#float ui:spSusp default:1.0
+				travel type:#worldUnits ui:spTravel default:100.0
 			)
 			rollout params "Car Rig"
 			(
@@ -206,10 +229,12 @@ buttonText:"SCR"
 				spinner spRay "Ray start height" type:#worldunits range:[0, 1e6, 200]
 				checkbox cbReverse "Reverse along spline"
 				spinner spSpin "Tyre spin x" range:[-100, 100, 1]
+				spinner spSusp "Suspension" range:[0, 1, 1]
+				spinner spTravel "Travel" type:#worldunits range:[0, 1e6, 100]
 			)
 		)
 
-		local toolVersion = "0.3.0"
+		local toolVersion = "0.4.0"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -325,7 +350,7 @@ buttonText:"SCR"
 		-- Every local is declared at the top: Max 2026 throws "Bad free thunk" for locals
 		-- declared inside if/else blocks and then read in a for-loop.
 		fn buildRig cars path grounds bottom fwdIndex mode rayUp wheels usePivot lookAhead steerMax bank = (
-			local picked, base, tm, inv, bb, carLen, carWid, carSize, wheelSize, root, m, ca, offs, lenText
+			local picked, base, tm, inv, bb, carLen, carWid, carSize, wheelSize, root, m, ca, offs, lenText, suspH, psc, cw, rest
 			-- The spline length is measured once here and written into the scripts: measuring it every frame
 			-- in every script was a large share of the playback cost. Rebuild the rig after editing the spline.
 			lenText = (amax 0.001 (curveLength path 1)) as string
@@ -356,7 +381,9 @@ buttonText:"SCR"
 			addModifier root m
 			custAttributes.add m (paramsCA())
 			ca = custAttributes.get m 1
-			for p in #(#progress, #lookAhead, #steerMax, #bank, #rayUp, #spin) do ca[p].controller = bezier_float()
+			for p in #(#progress, #lookAhead, #steerMax, #bank, #rayUp, #spin, #suspension, #travel) do ca[p].controller = bezier_float()
+			-- Wheels may move up or down by half a wheel radius by default.
+			ca.travel = if picked.count > 0 then wheelRadius picked[1] * 0.5 else carSize * 0.03
 			ca.lookAhead = lookAhead
 			ca.steerMax = steerMax
 			ca.bank = bank
@@ -429,7 +456,26 @@ buttonText:"SCR"
 					for k = 2 to 3 do if abs (dot st[k] tm.row2) > abs (dot st[axisK] tm.row2) do axisK = k
 					axisSign = if (dot st[axisK] tm.row2) < 0 then -1 else 1
 					spinH = rigHelper (base + "_CarRig_Spin" + corners[i]) st (wheelSize * 1.1) (color 225 214 198) false
-					spinH.parent = wheelHolder
+					-- Suspension helper at the wheel centre, in the rig's orientation, between the holder and the spin.
+					cw = copy tm
+					cw.row4 = wheelCentre wheels[i] usePivot
+					suspH = rigHelper (base + "_CarRig_Susp" + corners[i]) cw (wheelSize * 0.9) (color 170 160 150) false
+					suspH.parent = wheelHolder
+					rest = suspH.position.controller.value
+					psc = position_script()
+					psc.AddNode "rig" root
+					for g = 1 to grounds.count do psc.AddNode ("g" + g as string) grounds[g]
+					psc.AddTarget "rayUp" ca[#rayUp].controller
+					psc.AddTarget "suspension" ca[#suspension].controller
+					psc.AddTarget "travel" ca[#travel].controller
+					s = substituteString suspScript "%RAYFNS%" rayFns
+					s = substituteString s "%GROUNDS%" (listText (for g = 1 to grounds.count collect ("g" + g as string)))
+					s = substituteString s "%REST%" (rest as string)
+					c = wheelCentre wheels[i] usePivot
+					s = substituteString s "%CONTACT%" (([c.x, c.y, c.z - wheelRadius wheels[i]] * inv) as string)
+					psc.script = s
+					suspH.position.controller = psc
+					spinH.parent = suspH
 					baseRot = (spinH.rotation.controller.value) as matrix3
 					spc = rotation_script()
 					spc.AddNode "sp" path
@@ -458,7 +504,7 @@ buttonText:"SCR"
 			)
 			linkTo bottom root
 
-			s = substituteString rootScript "%MODE%" (mode as string)
+			s = substituteString (substituteString rootScript "%RAYFNS%" rayFns) "%MODE%" (mode as string)
 			s = substituteString s "%GROUNDS%" (listText (for i = 1 to grounds.count collect ("g" + i as string)))
 			s = substituteString s "%OFFSETS%" (listText offs)
 			ctrl = transform_script()
@@ -472,9 +518,34 @@ buttonText:"SCR"
 			root
 		)
 
+		-- Puts the rig, its helpers, the aim and every car part on one layer named after the rig, and
+		-- remembers each node's old layer so Remove can put it back.
+		fn moveToRigLayer root = (
+			local lay, nodes, h
+			lay = LayerManager.getLayerFromName root.name
+			if lay == undefined do lay = LayerManager.newLayerFromName root.name
+			nodes = withDescendants #(root)
+			h = getUserProp root "MaxCarRig_aim"
+			if h != undefined do append nodes (maxOps.getNodeByHandle h)
+			for n in nodes where isValidNode n do (
+				setUserProp n "MaxCarRig_oldLayer" n.layer.name
+				lay.addNode n
+			)
+		)
+
 		fn removeRig root = (
-			local all, h, extras
+			local all, h, extras, oldLayer, lay, rigLayerName
 			all = withDescendants #(root)
+			rigLayerName = root.name
+			-- Back to the layers they came from (a layer called 0 reads back as a number, hence as string).
+			h = getUserProp root "MaxCarRig_aim"
+			for n in all + (if h == undefined then #() else #(maxOps.getNodeByHandle h)) where isValidNode n do (
+				oldLayer = getUserProp n "MaxCarRig_oldLayer"
+				if oldLayer != undefined do (
+					lay = LayerManager.getLayerFromName (oldLayer as string)
+					if lay != undefined do lay.addNode n
+				)
+			)
 			for n in all where getUserProp n "MaxCarRig_oldParent" != undefined and getUserProp n "MaxCarRig_helper" != true do (
 				h = getUserProp n "MaxCarRig_oldParent"
 				n.parent = if h == 0 then undefined else maxOps.getNodeByHandle h
@@ -493,6 +564,7 @@ buttonText:"SCR"
 			delete (for n in all where isValidNode n and getUserProp n "MaxCarRig_helper" == true collect n)
 			delete root
 			for n in extras where isValidNode n do delete n
+			LayerManager.deleteLayerByName rigLayerName
 		)
 
 		dotNetControl lblBrand "System.Windows.Forms.Label" width:514 height:20
@@ -538,6 +610,7 @@ buttonText:"SCR"
 			spinner spSteer "Max steer (deg)" range:[0, 89, 35]
 			spinner spBank "Bank (deg)" range:[-45, 45, 3]
 		)
+		checkbox cbRigLayer "Put the rig and car on their own layer (untick to leave them where they are)" checked:true
 		button btnBuild "Build rig" width:250 height:28 across:2
 		button btnRemove "Remove selected rig" width:250 height:28
 		group "Bake"
@@ -949,6 +1022,7 @@ buttonText:"SCR"
 					try (
 						local root = buildRig carNodes pathShape grounds bottomNode fwdUse mode spRay.value \
 							wheels (ddCentre.selection == 1) spAhead.value spSteer.value spBank.value
+						if cbRigLayer.checked do moveToRigLayer root
 						select root
 						logLine ("  built: " + root.name + ", children: " + names (withDescendants #(root)))
 					)
