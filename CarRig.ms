@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "Car Rig" width:260
+	rollout MaxCarRig_UI "V1 Simple Car Rig" width:260
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
@@ -182,6 +182,11 @@ buttonText:"SCR"
 			)
 		)
 
+		-- Visualisation One brand colours, from visualisation.one: charcoal ink, cream, stone, rust accent.
+		-- Their typeface (ABC Arizona) is not free to ship, so the header uses Georgia, a serif on every Windows PC.
+		fn dnColour c = (dotNetClass "System.Drawing.Color").FromArgb c.r c.g c.b
+		local v1Ink = color 55 50 47, v1Cream = color 243 240 237, v1Stone = color 210 200 185, v1Rust = color 183 65 14
+
 		fn shapeFilt o = superClassOf o == Shape
 		fn geoFilt o = superClassOf o == GeometryClass
 
@@ -262,7 +267,8 @@ buttonText:"SCR"
 			setUserProp n "MaxCarRig_oldParent" (if n.parent == undefined then 0 else n.parent.handle)
 			-- A group member must leave its group before it can follow a rig helper; Remove puts it back.
 			setUserProp n "MaxCarRig_wasGroupMember" (isGroupMember n)
-			if isGroupMember n do detachNodesFromGroup #(n)
+			-- detachNodesFromGroup refuses some nested members ("invalid input"); clearing the flag does the same job.
+			if isGroupMember n do (try (detachNodesFromGroup #(n)) catch (setGroupMember n false))
 			n.parent = parent
 		)
 
@@ -302,7 +308,7 @@ buttonText:"SCR"
 
 			-- The root is a rectangle round the car's footprint: helpers cannot hold modifiers, shapes can.
 			root = Rectangle name:(uniqueName (base + "_CarRig")) transform:tm \
-				width:(carLen * 1.15) length:(carWid * 1.25) wirecolor:green
+				width:(carLen * 1.15) length:(carWid * 1.25) wirecolor:(color 183 65 14)
 			setUserProp root "MaxCarRig" true
 			m = EmptyModifier name:"Car Rig"
 			addModifier root m
@@ -428,7 +434,7 @@ buttonText:"SCR"
 				n.parent = if h == 0 then undefined else maxOps.getNodeByHandle h
 				-- Parts taken out of a group at build time go back into it.
 				if getUserProp n "MaxCarRig_wasGroupMember" == true and n.parent != undefined and isGroupHead n.parent do
-					attachNodesToGroup #(n) n.parent
+					(try (attachNodesToGroup #(n) n.parent) catch (setGroupMember n true))
 			)
 			-- Delete the scripted nodes before the nodes their scripts read (aim, old path helper),
 			-- or Max re-evaluates a script whose target has gone and throws errors.
@@ -443,20 +449,22 @@ buttonText:"SCR"
 			for n in extras where isValidNode n do delete n
 		)
 
-		group "1. Car"
+		dotNetControl lblBrand "System.Windows.Forms.Label" width:234 height:20
+		dotNetControl lblTitle "System.Windows.Forms.Label" width:234 height:30 offset:[0,-5]
+		group "Car"
 		(
 			button btnCar "Use selection as car" width:230
 			label lblCar "No car set" align:#left
 		)
-		group "2. Path"
+		group "Path"
 		(
 			pickbutton pbPath "Pick spline" filter:shapeFilt autoDisplay:true width:230
 		)
-		group "3. Mode"
+		group "Mode"
 		(
 			radiobuttons rbMode labels:#("Simple: stick to spline", "Body: BOTTOM on ground", "Per wheel: fit to 4 wheels") columns:1 align:#left default:2
 		)
-		group "4. Ground"
+		group "Ground"
 		(
 			radiobuttons rbGround labels:#("Include list", "Exclude list") columns:2 align:#left
 			listbox lbGround height:4
@@ -465,12 +473,12 @@ buttonText:"SCR"
 			button btnGroundClear "Clear" width:72
 			spinner spRay "Ray start above spline" range:[0, 1e6, 200] type:#worldunits
 		)
-		group "5. BOTTOM"
+		group "BOTTOM"
 		(
 			button btnBottomMake "Create at car bottom" width:230
 			pickbutton pbBottom "Or pick BOTTOM" autoDisplay:true width:230
 		)
-		group "6. Wheels (front pair steers)"
+		group "Wheels (front pair steers)"
 		(
 			dropdownlist ddCentre "Wheel centre" items:#("Pivot point", "Bounding box centre")
 			pickbutton pbFL "Front left wheel" autoDisplay:true width:230
@@ -478,14 +486,14 @@ buttonText:"SCR"
 			pickbutton pbRL "Rear left wheel" autoDisplay:true width:230
 			pickbutton pbRR "Rear right wheel" autoDisplay:true width:230
 		)
-		group "7. Options"
+		group "Options"
 		(
 			dropdownlist ddFwd "Car front faces (world)" items:#("+X", "-X", "+Y", "-Y")
 			spinner spAhead "Look ahead" range:[0, 1e6, 100] type:#worldunits
 			spinner spSteer "Max steer (deg)" range:[0, 89, 35]
 			spinner spBank "Bank (deg)" range:[-45, 45, 3]
 		)
-		button btnBuild "Build rig" width:230 height:28
+		dotNetControl btnBuild "System.Windows.Forms.Button" width:230 height:32
 		button btnRemove "Remove selected rig" width:230
 		button btnSpeed "Speed test (selected rig)" width:230
 		button btnLog "Open log" width:230
@@ -506,6 +514,21 @@ buttonText:"SCR"
 		)
 
 		on MaxCarRig_UI open do (
+			local fontStyle = dotNetClass "System.Drawing.FontStyle"
+			lblBrand.BackColor = dnColour v1Ink
+			lblBrand.ForeColor = dnColour v1Stone
+			lblBrand.Font = dotNetObject "System.Drawing.Font" "Georgia" 8 fontStyle.Regular
+			lblBrand.Text = "VISUALISATION ONE"
+			lblTitle.BackColor = dnColour v1Ink
+			lblTitle.ForeColor = dnColour v1Cream
+			lblTitle.Font = dotNetObject "System.Drawing.Font" "Georgia" 15 fontStyle.Regular
+			lblTitle.Text = "Simple Car Rig"
+			btnBuild.Text = "Build rig"
+			btnBuild.FlatStyle = (dotNetClass "System.Windows.Forms.FlatStyle").Flat
+			btnBuild.FlatAppearance.BorderSize = 0
+			btnBuild.BackColor = dnColour v1Rust
+			btnBuild.ForeColor = dnColour v1Cream
+			btnBuild.Font = dotNetObject "System.Drawing.Font" "Georgia" 11 fontStyle.Regular
 			logLine ("Opened. Max version " + ((maxVersion())[1] as string) + ", log: " + logPath)
 			refreshUI()
 		)
@@ -628,7 +651,7 @@ buttonText:"SCR"
 		on pbRL picked o do (wheelNodes[3] = partOf o; pbRL.object = wheelNodes[3]; logLine ("Wheel RL: picked " + o.name + ", using " + wheelNodes[3].name))
 		on pbRR picked o do (wheelNodes[4] = partOf o; pbRR.object = wheelNodes[4]; logLine ("Wheel RR: picked " + o.name + ", using " + wheelNodes[4].name))
 
-		on btnBuild pressed do (
+		on btnBuild click do (
 			local pivotGap, fc, rc, dirv, fwdUse
 			local mode = rbMode.state
 			carNodes = for n in carNodes where isValidNode n collect n
@@ -714,7 +737,7 @@ buttonText:"SCR"
 
 	on execute do (
 		try (destroyDialog MaxCarRig_UI) catch ()
-		createDialog MaxCarRig_UI
+		try (createDialog MaxCarRig_UI bgcolor:(color 55 50 47) fgcolor:(color 243 240 237)) catch (createDialog MaxCarRig_UI)
 	)
 )
 
