@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.9.0" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.9.1" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
@@ -330,17 +330,19 @@ buttonText:"SCR"
 	local rest = %REST%
 	local metre = %METRE%
 	local dh = 0.0, dp = 0.0, dr = 0.0, n, i, k, j, w, wsum, tk, uk, pk, hh, pp, rr, h0, p0, r0, out
-	local len, dirS, toG, sigB, sigP, nB, nP, nMax, prog = #(), idx, d0, d1, d2, v, q, ua, ub, ta, tb, kap, lon, lat
-	local sumB = 0.0, sumP = 0.0, wbs = 0.0, wps = 0.0, ax = 0.0, ay = 0.0, delta, mats = #(), realistic, roll, pitch
+	local len, dirS, toG, sigB, sigP, sigS, nB, nP, nS, nMax, prog = #(), idx, d0, d1, d2, v, q, ua, ub, ta, tb, kap, lon, lat
+	local sumB = 0.0, sumP = 0.0, sumS = 0.0, wbs = 0.0, wps = 0.0, wss = 0.0, ax = 0.0, ay = 0.0, delta, mats = #(), realistic, roll, pitch
 	fn wrapU sp x = if isClosed sp 1 then (mod ((mod x 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 x))
 	len = (splineTable sp)[3]
 	dirS = if rigCA.reverse then -1.0 else 1.0
 	toG = frameRate * frameRate / (metre * 9.81)
 	sigB = amax 0.5 (rigCA.bankTime / 2.0)
 	sigP = amax 0.5 (rigCA.pitchTime / 2.0)
+	sigS = amax 0.5 (rigCA.startTime / 2.0)
 	nB = (amin 30 (ceil (2.0 * sigB))) as integer
 	nP = (amin 30 (ceil (2.0 * sigP))) as integer
-	nMax = amax nB nP
+	nS = (amin 30 (ceil (2.0 * sigS))) as integer
+	nMax = amax nB (amax nP nS)
 	-- prog[k + nMax + 2] is the travelled fraction at frame F + k
 	for k = -(nMax + 1) to nMax + 1 do append prog (travelQ sp ((at time ((F + k) as time) progCtrl.value) / 100.0) rigCA.reverse rigCA.cornerSlow rigCA.cornerAmount rigCA.cornerRadius rigCA.cornerBrake)
 	-- bends are measured over 1 m either side
@@ -351,12 +353,19 @@ buttonText:"SCR"
 		d0 = prog[idx - 1] * len
 		d1 = prog[idx] * len
 		d2 = prog[idx + 1] * len
+		lon = (d2 - 2.0 * d1 + d0) * toG
+		-- Braking is eased over Stop ease, speeding up over Start ease.
 		if (abs k) <= nP do
 		(
-			lon = (d2 - 2.0 * d1 + d0) * toG
 			w = exp (-((k * k) / (sigP * sigP)))
 			sumP += w * lon
 			wps += w
+		)
+		if (abs k) <= nS do
+		(
+			w = exp (-((k * k) / (sigS * sigS)))
+			sumS += w * lon
+			wss += w
 		)
 		if (abs k) <= nB do
 		(
@@ -375,7 +384,7 @@ buttonText:"SCR"
 			wbs += w
 		)
 	)
-	ax = sumP / wps
+	ax = (amax 0.0 (sumS / wss)) + (amin 0.0 (sumP / wps))
 	ay = sumB / wbs
 	realistic = rigCA.realistic and rigCA.bodyLag > 0.0 and rigCA.bodyFollow > 0.0
 	if realistic do
@@ -450,7 +459,7 @@ buttonText:"SCR"
 )"
 
 		-- The controls on the rig's "Car Rig" modifier. All are animatable.
-		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4f99)
+		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4f9a)
 		(
 			parameters main rollout:params
 			(
@@ -462,7 +471,8 @@ buttonText:"SCR"
 				maxBank type:#float ui:spMaxBank default:6.0
 				maxPitch type:#float ui:spMaxPitch default:4.0
 				bankTime type:#float ui:spBankTime default:10.0
-				pitchTime type:#float ui:spPitchTime default:8.0
+				pitchTime type:#float ui:spPitchTime default:6.0
+				startTime type:#float ui:spStartTime default:10.0
 				rayUp type:#worldUnits ui:spRay default:200.0
 				reverse type:#boolean ui:cbReverse default:false
 				spin type:#float ui:spSpin default:1.0
@@ -495,7 +505,8 @@ buttonText:"SCR"
 				group "Dive / squat (stop, start)"
 				(
 					spinner spDive "Deg per g" range:[-45, 45, 3] fieldwidth:56
-					spinner spPitchTime "Ease frames" range:[1, 60, 8] fieldwidth:56
+					spinner spStartTime "Start ease" range:[1, 60, 10] fieldwidth:56
+					spinner spPitchTime "Stop ease" range:[1, 60, 6] fieldwidth:56
 					spinner spMaxPitch "Max deg" range:[0, 45, 4] fieldwidth:56
 				)
 				group "Wheels"
@@ -521,7 +532,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.9.0"
+		local toolVersion = "0.9.1"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -1410,7 +1421,7 @@ buttonText:"SCR"
 				else (
 					-- Keep every modifier setting: animated ones as a copy of their controller (keys included).
 					ca = rigParams root
-					names = #(#progress, #lookAhead, #steerMax, #bank, #rayUp, #spin, #suspension, #travel, #diveSquat, #bankTime, #pitchTime, #bodyFollow, #bodyLag, #reverse, #realistic, #maxBank, #maxPitch, #cornerSlow, #cornerAmount, #cornerRadius, #cornerBrake)
+					names = #(#progress, #lookAhead, #steerMax, #bank, #rayUp, #spin, #suspension, #travel, #diveSquat, #bankTime, #pitchTime, #startTime, #bodyFollow, #bodyLag, #reverse, #realistic, #maxBank, #maxPitch, #cornerSlow, #cornerAmount, #cornerRadius, #cornerBrake)
 					saved = #()
 					for n in names do (
 						c = try (ca[n].controller) catch (undefined)
