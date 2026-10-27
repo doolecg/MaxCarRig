@@ -286,6 +286,9 @@ buttonText:"SCR"
 				fr = wheels[2]
 				steering = isValidNode fl and isValidNode fr
 				front = if steering then ((wheelCentre fl usePivot + wheelCentre fr usePivot) / 2) * inv else [0,0,0]
+				-- Steer from the car centre line: the aim sits on the spline, which is the root X axis,
+				-- so a straight spline gives exactly zero steer even if the two wheels are not symmetric.
+				front.y = 0.0
 
 				-- Bank pivots at wheel centre height so the body rolls about its axle line, not the ground.
 				axleZ = 0.0
@@ -508,6 +511,7 @@ buttonText:"SCR"
 		on pbRR picked o do (wheelNodes[4] = partOf o; pbRR.object = wheelNodes[4]; logLine ("Wheel RR: picked " + o.name + ", using " + wheelNodes[4].name))
 
 		on btnBuild pressed do (
+			local off
 			local mode = rbMode.state
 			carNodes = for n in carNodes where isValidNode n collect n
 			groundList = for n in groundList where isValidNode n collect n
@@ -546,6 +550,11 @@ buttonText:"SCR"
 			logLine ("  grounds used: " + names grounds)
 			logLine ("  path: " + (if isValidNode pathShape then pathShape.name else "-") + ", BOTTOM: " + (if isValidNode bottomNode then bottomNode.name else "-"))
 			logLine ("  wheels FL FR RL RR: " + names wheels)
+			for w in wheels where isValidNode w do (
+				off = distance w.pos ((w.min + w.max) / 2)
+				if off > (w.max.z - w.min.z) * 0.25 do
+					logLine ("  warning: " + w.name + " pivot is " + off as string + " units from its centre. Use Wheel centre: Bounding box centre, or fix the pivot.")
+			)
 			if err != undefined then (
 				logLine ("  stopped: " + err)
 				messageBox err title:"Car Rig"
