@@ -29,14 +29,16 @@ buttonText:"SCR"
 	local mode = %MODE%
 	local grounds = #(%GROUNDS%)
 	local offs = #(%OFFSETS%)
+	-- All locals up front: Max throws "Bad free thunk" for locals declared in a nested block and read in a loop.
+	local u, p, fwd, y, h, up, guess, hits, w, x, tm, mid, offMid
 	fn castDown grounds p rayUp =
 	(
-		local best = undefined
+		local best = undefined, hit
 		local r = ray (p + [0,0,rayUp]) [0,0,-1]
 		for g in grounds where isValidNode g and p.x >= g.min.x and p.x <= g.max.x and p.y >= g.min.y and p.y <= g.max.y do
 		(
-			local h = intersectRay g r
-			if h != undefined and (best == undefined or h.pos.z > best.pos.z) do best = h
+			hit = intersectRay g r
+			if hit != undefined and (best == undefined or hit.pos.z > best.pos.z) do best = hit
 		)
 		best
 	)
@@ -45,45 +47,46 @@ buttonText:"SCR"
 		local y = normalize (cross z x)
 		matrix3 (cross y z) y z pos
 	)
-	local u = progress / 100.0
+	u = progress / 100.0
 	if rigCA.reverse do u = 1.0 - u
 	u = if isClosed sp 1 then (mod ((mod u 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 u))
-	local p = lengthInterp sp 1 u
-	local fwd = normalize (lengthTangent sp 1 u)
+	p = lengthInterp sp 1 u
+	fwd = normalize (lengthTangent sp 1 u)
 	if rigCA.reverse do fwd = -fwd
 	case mode of
 	(
 		1:
 		(
-			local y = normalize (cross [0,0,1] fwd)
+			y = normalize (cross [0,0,1] fwd)
 			matrix3 fwd y (cross fwd y) p
 		)
 		2:
 		(
-			local h = castDown grounds p rayUp
+			h = castDown grounds p rayUp
 			if h == undefined then frameFrom fwd [0,0,1] p
 			else
 			(
-				local up = normalize h.dir
+				up = normalize h.dir
 				if up.z < 0 do up = -up
 				frameFrom fwd up h.pos
 			)
 		)
 		default:
 		(
-			local guess = frameFrom (normalize [fwd.x, fwd.y, 0]) [0,0,1] p
-			local hits = for o in offs collect
+			guess = frameFrom (normalize [fwd.x, fwd.y, 0]) [0,0,1] p
+			hits = #()
+			for o in offs do
 			(
-				local w = o * guess
-				local h = castDown grounds w rayUp
-				if h == undefined then w else h.pos
+				w = o * guess
+				h = castDown grounds w rayUp
+				append hits (if h == undefined then w else h.pos)
 			)
 			-- Wheel order is FL, FR, RL, RR: front minus rear is forward, left minus right is left.
-			local x = (hits[1] + hits[2]) - (hits[3] + hits[4])
-			local y = (hits[1] + hits[3]) - (hits[2] + hits[4])
-			local tm = frameFrom (normalize x) (normalize (cross x y)) [0,0,0]
-			local mid = (hits[1] + hits[2] + hits[3] + hits[4]) / 4
-			local offMid = (offs[1] + offs[2] + offs[3] + offs[4]) / 4
+			x = (hits[1] + hits[2]) - (hits[3] + hits[4])
+			y = (hits[1] + hits[3]) - (hits[2] + hits[4])
+			tm = frameFrom (normalize x) (normalize (cross x y)) [0,0,0]
+			mid = (hits[1] + hits[2] + hits[3] + hits[4]) / 4
+			offMid = (offs[1] + offs[2] + offs[3] + offs[4]) / 4
 			tm.row4 = mid - offMid * tm
 			tm
 		)
@@ -204,8 +207,14 @@ buttonText:"SCR"
 
 		fn linkTo n parent = (
 			setUserProp n "MaxCarRig_oldParent" (if n.parent == undefined then 0 else n.parent.handle)
+			-- A group member must leave its group before it can follow a rig helper; Remove puts it back.
+			setUserProp n "MaxCarRig_wasGroupMember" (isGroupMember n)
+			if isGroupMember n do detachNodesFromGroup #(n)
 			n.parent = parent
 		)
+
+		-- A part picked inside a closed group stands for that whole group (a wheel group: rim, tyre, brake).
+		fn partOf o = if isGroupMember o and not isOpenGroupMember o and o.parent != undefined and isGroupHead o.parent then o.parent else o
 
 		fn rigHelper nm tm sz col isBox = (
 			local h = Point name:(uniqueName nm) transform:tm size:sz box:isBox cross:(not isBox) \
@@ -215,31 +224,36 @@ buttonText:"SCR"
 		)
 
 		-- mode: 1 simple, 2 body, 3 per wheel. wheels: #(FL, FR, RL, RR), entries may be undefined.
+		-- Every local is declared at the top: Max 2026 throws "Bad free thunk" for locals
+		-- declared inside if/else blocks and then read in a for-loop.
 		fn buildRig cars path grounds bottom fwdIndex mode rayUp wheels usePivot lookAhead steerMax bank = (
-			local picked = for w in wheels where w != undefined collect w
-			local base = (topLevel cars)[1].name
-			local tm = startFrame bottom fwdIndex
-			local inv = inverse tm
+			local picked, base, tm, inv, bb, carLen, carWid, carSize, wheelSize, root, m, ca, offs
+			local aim, ac, fl, fr, steering, front, axleZ, bankTm, bankH, bc, sc, st, sh, wheelParts, bodyNodes, c, s, ctrl
+
+			picked = for w in wheels where w != undefined collect w
+			base = (topLevel cars)[1].name
+			tm = startFrame bottom fwdIndex
+			inv = inverse tm
 
 			-- Sizes come from the car and wheels so the helpers are readable at any scale.
-			local bb = bboxOf (cars + picked)
-			local carLen = if fwdIndex <= 2 then bb[2].x - bb[1].x else bb[2].y - bb[1].y
-			local carWid = if fwdIndex <= 2 then bb[2].y - bb[1].y else bb[2].x - bb[1].x
-			local carSize = amax carLen carWid
-			local wheelSize = carSize * 0.15
+			bb = bboxOf (cars + picked)
+			carLen = if fwdIndex <= 2 then bb[2].x - bb[1].x else bb[2].y - bb[1].y
+			carWid = if fwdIndex <= 2 then bb[2].y - bb[1].y else bb[2].x - bb[1].x
+			carSize = amax carLen carWid
+			wheelSize = carSize * 0.15
 			if picked.count > 0 do (
 				wheelSize = 0.0
 				for w in picked do wheelSize += wheelRadius w * 2 / picked.count
 			)
 
 			-- The root is a rectangle round the car's footprint: helpers cannot hold modifiers, shapes can.
-			local root = Rectangle name:(uniqueName (base + "_CarRig")) transform:tm \
+			root = Rectangle name:(uniqueName (base + "_CarRig")) transform:tm \
 				width:(carLen * 1.15) length:(carWid * 1.25) wirecolor:green
 			setUserProp root "MaxCarRig" true
-			local m = EmptyModifier name:"Car Rig"
+			m = EmptyModifier name:"Car Rig"
 			addModifier root m
 			custAttributes.add m (paramsCA())
-			local ca = custAttributes.get m 1
+			ca = custAttributes.get m 1
 			for p in #(#progress, #lookAhead, #steerMax, #bank, #rayUp) do ca[p].controller = bezier_float()
 			ca.lookAhead = lookAhead
 			ca.steerMax = steerMax
@@ -255,12 +269,12 @@ buttonText:"SCR"
 				k.outTangentType = #linear
 			)
 
-			local offs = #()
+			offs = #()
 			if mode == 1 then (
 				for n in topLevel cars do linkTo n root
 			) else (
-				local aim = rigHelper (base + "_CarRig_Aim") (matrix3 1) (wheelSize * 0.8) orange true
-				local ac = position_script()
+				aim = rigHelper (base + "_CarRig_Aim") (matrix3 1) (wheelSize * 0.8) orange true
+				ac = position_script()
 				aim.position.controller = ac
 				ac.AddNode "sp" path
 				ac.AddTarget "progress" ca[#progress].controller
@@ -269,18 +283,19 @@ buttonText:"SCR"
 				ac.script = aimScript
 				setUserProp root "MaxCarRig_aim" aim.handle
 
-				local fl = wheels[1], fr = wheels[2]
-				local steering = isValidNode fl and isValidNode fr
-				local front = if steering then ((wheelCentre fl usePivot + wheelCentre fr usePivot) / 2) * inv else [0,0,0]
+				fl = wheels[1]
+				fr = wheels[2]
+				steering = isValidNode fl and isValidNode fr
+				front = if steering then ((wheelCentre fl usePivot + wheelCentre fr usePivot) / 2) * inv else [0,0,0]
 
 				-- Bank pivots at wheel centre height so the body rolls about its axle line, not the ground.
-				local axleZ = 0.0
+				axleZ = 0.0
 				for w in picked do axleZ += ((wheelCentre w usePivot) * inv).z / picked.count
-				local bankTm = copy tm
+				bankTm = copy tm
 				bankTm.row4 = tm.pos + [0, 0, axleZ]
-				local bankH = rigHelper (base + "_CarRig_Bank") bankTm (carSize * 0.4) (color 150 60 200) false
+				bankH = rigHelper (base + "_CarRig_Bank") bankTm (carSize * 0.4) (color 150 60 200) false
 				bankH.parent = root
-				local bc = rotation_script()
+				bc = rotation_script()
 				bankH.rotation.controller = bc
 				bc.AddNode "rig" root
 				bc.AddNode "aimNode" aim
@@ -288,16 +303,16 @@ buttonText:"SCR"
 				bc.AddTarget "bank" ca[#bank].controller
 				bc.script = substituteString bankScript "%FRONT%" (front as string)
 
-				if steering then (
-					local sc = rotation_script()
+				if steering do (
+					sc = rotation_script()
 					sc.AddNode "rig" root
 					sc.AddNode "aimNode" aim
 					sc.AddTarget "steerMax" ca[#steerMax].controller
 					sc.script = substituteString steerScript "%FRONT%" (front as string)
 					for i = 1 to 2 do (
-						local st = copy tm
+						st = copy tm
 						st.row4 = wheelCentre wheels[i] usePivot
-						local sh = rigHelper (base + (if i == 1 then "_CarRig_SteerFL" else "_CarRig_SteerFR")) st (wheelSize * 1.3) red true
+						sh = rigHelper (base + (if i == 1 then "_CarRig_SteerFL" else "_CarRig_SteerFR")) st (wheelSize * 1.3) red true
 						sh.parent = root
 						sh.rotation.controller = sc
 						linkTo wheels[i] sh
@@ -305,21 +320,23 @@ buttonText:"SCR"
 				)
 				for i = 3 to 4 where isValidNode wheels[i] do linkTo wheels[i] root
 				-- Anything under a picked wheel (hubcaps, brakes) stays with that wheel.
-				local wheelParts = withDescendants picked
-				for n in topLevel (for c in cars where findItem wheelParts c == 0 collect c) do linkTo n bankH
+				wheelParts = withDescendants picked
+				bodyNodes = for n in cars where findItem wheelParts n == 0 collect n
+				for n in topLevel bodyNodes do linkTo n bankH
 
-				if mode == 3 do
-					offs = for w in wheels collect (
-						local c = wheelCentre w usePivot
-						[c.x, c.y, c.z - wheelRadius w] * inv
+				if mode == 3 do (
+					for w in wheels do (
+						c = wheelCentre w usePivot
+						append offs ([c.x, c.y, c.z - wheelRadius w] * inv)
 					)
+				)
 			)
 			linkTo bottom root
 
-			local s = substituteString rootScript "%MODE%" (mode as string)
+			s = substituteString rootScript "%MODE%" (mode as string)
 			s = substituteString s "%GROUNDS%" (listText (for i = 1 to grounds.count collect ("g" + i as string)))
 			s = substituteString s "%OFFSETS%" (listText offs)
-			local ctrl = transform_script()
+			ctrl = transform_script()
 			root.transform.controller = ctrl
 			ctrl.AddNode "sp" path
 			ctrl.AddTarget "progress" ca[#progress].controller
@@ -331,16 +348,21 @@ buttonText:"SCR"
 		)
 
 		fn removeRig root = (
-			local all = withDescendants #(root)
+			local all, h, extras
+			all = withDescendants #(root)
 			for n in all where getUserProp n "MaxCarRig_oldParent" != undefined and getUserProp n "MaxCarRig_helper" != true do (
-				local h = getUserProp n "MaxCarRig_oldParent"
+				h = getUserProp n "MaxCarRig_oldParent"
 				n.parent = if h == 0 then undefined else maxOps.getNodeByHandle h
+				-- Parts taken out of a group at build time go back into it.
+				if getUserProp n "MaxCarRig_wasGroupMember" == true and n.parent != undefined and isGroupHead n.parent do
+					attachNodesToGroup #(n) n.parent
 			)
 			-- Delete the scripted nodes before the nodes their scripts read (aim, old path helper),
 			-- or Max re-evaluates a script whose target has gone and throws errors.
-			local extras = for k in #("MaxCarRig_aim", "MaxCarRig_path") collect (
-				local h = getUserProp root k
-				if h == undefined then undefined else maxOps.getNodeByHandle h
+			extras = #()
+			for k in #("MaxCarRig_aim", "MaxCarRig_path") do (
+				h = getUserProp root k
+				if h != undefined do append extras (maxOps.getNodeByHandle h)
 			)
 			clearSelection()
 			delete (for n in all where isValidNode n and getUserProp n "MaxCarRig_helper" == true collect n)
@@ -432,16 +454,18 @@ buttonText:"SCR"
 			-- The car is usually still selected here; skip its parts so it never becomes its own ground.
 			local carAll = withDescendants (for n in carNodes where isValidNode n collect n)
 			local sel = for o in selection collect o
-			local added = #(), skipped = #()
+			local added = #(), skipped = #(), why
 			for o in sel do (
-				local why = case of (
+				-- Group heads are skipped quietly: their member meshes in the same selection are the ground.
+				why = case of (
 					(findItem groundList o != 0): undefined
 					(findItem carAll o != 0): "part of the car"
+					(isGroupHead o): undefined
 					(not geoFilt o): "not geometry (" + (classOf o) as string + ")"
 					default: undefined
 				)
 				if why != undefined then append skipped (o.name + ": " + why)
-				else if findItem groundList o == 0 do append added o
+				else if findItem groundList o == 0 and not isGroupHead o do append added o
 			)
 			join groundList added
 			logLine ("Ground add. Selected: " + names sel + " | added: " + names added + " | skipped: " + listText skipped + " | list now: " + names groundList)
@@ -479,10 +503,10 @@ buttonText:"SCR"
 			bottomNode = o
 			logLine ("BOTTOM picked: " + o.name)
 		)
-		on pbFL picked o do (wheelNodes[1] = o; logLine ("Wheel FL: " + o.name))
-		on pbFR picked o do (wheelNodes[2] = o; logLine ("Wheel FR: " + o.name))
-		on pbRL picked o do (wheelNodes[3] = o; logLine ("Wheel RL: " + o.name))
-		on pbRR picked o do (wheelNodes[4] = o; logLine ("Wheel RR: " + o.name))
+		on pbFL picked o do (wheelNodes[1] = partOf o; pbFL.object = wheelNodes[1]; logLine ("Wheel FL: picked " + o.name + ", using " + wheelNodes[1].name))
+		on pbFR picked o do (wheelNodes[2] = partOf o; pbFR.object = wheelNodes[2]; logLine ("Wheel FR: picked " + o.name + ", using " + wheelNodes[2].name))
+		on pbRL picked o do (wheelNodes[3] = partOf o; pbRL.object = wheelNodes[3]; logLine ("Wheel RL: picked " + o.name + ", using " + wheelNodes[3].name))
+		on pbRR picked o do (wheelNodes[4] = partOf o; pbRR.object = wheelNodes[4]; logLine ("Wheel RR: picked " + o.name + ", using " + wheelNodes[4].name))
 
 		on btnBuild pressed do (
 			local mode = rbMode.state
