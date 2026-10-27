@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.6.0" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.6.1" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
@@ -29,7 +29,7 @@ buttonText:"SCR"
 	global MaxCarRig_splines
 	fn splineTable sp =
 	(
-		local tab, key1, key2, e, pts, lens, ns, i, j, total, steps = 8
+		local tab, key1, key2, e, pts, lens, tans, ns, i, j, total, steps = 24
 		if MaxCarRig_splines == undefined do MaxCarRig_splines = #()
 		key1 = sp.transform as string
 		key2 = numKnots sp 1
@@ -57,7 +57,10 @@ buttonText:"SCR"
 				total += distance pts[i] pts[i - 1]
 				append lens total
 			)
-			tab = #(pts, lens, amax 0.001 total)
+			-- A smooth direction at every point (from its two neighbours), blended between points,
+			-- so the car turns smoothly instead of snapping at each sample.
+			tans = for i = 1 to pts.count collect normalize (pts[amin pts.count (i + 1)] - pts[amax 1 (i - 1)])
+			tab = #(pts, lens, amax 0.001 total, tans)
 			append MaxCarRig_splines #(sp, key1, key2, tab)
 		)
 		tab
@@ -77,7 +80,7 @@ buttonText:"SCR"
 			if lens[mid] <= target then lo = mid else hi = mid
 		)
 		a = if lens[hi] > lens[lo] then (target - lens[lo]) / (lens[hi] - lens[lo]) else 0.0
-		#(pts[lo] + (pts[hi] - pts[lo]) * a, normalize (pts[hi] - pts[lo]))
+		#(pts[lo] + (pts[hi] - pts[lo]) * a, normalize (tab[4][lo] * (1.0 - a) + tab[4][hi] * a))
 	)"
 
 		-- Ground ray functions shared by the rig root and the suspension scripts (pasted in at build).
@@ -341,7 +344,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.6.0"
+		local toolVersion = "0.6.1"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
