@@ -26,21 +26,21 @@ buttonText:"SCR"
 		local splineFns = @"-- Spline lookups from a table: the spline is sampled once into points with running lengths and kept in
 	-- a global. lengthInterp re-measures the whole spline on every call (about 100 ms on a long road), and
 	-- the rig asked several times a frame. The table is rebuilt when the spline moves or its knot count changes.
-	global MaxCarRig_splines
+	global MaxCarRig_splines2
 	fn splineTable sp =
 	(
 		local tab, key1, key2, e, pts, lens, tans, ns, i, j, total, steps = 24
-		if MaxCarRig_splines == undefined do MaxCarRig_splines = #()
+		if MaxCarRig_splines2 == undefined do MaxCarRig_splines2 = #()
 		key1 = sp.transform as string
 		key2 = numKnots sp 1
-		for i = MaxCarRig_splines.count to 1 by -1 do
+		for i = MaxCarRig_splines2.count to 1 by -1 do
 		(
-			e = MaxCarRig_splines[i]
-			if not isValidNode e[1] then deleteItem MaxCarRig_splines i
+			e = MaxCarRig_splines2[i]
+			if not isValidNode e[1] then deleteItem MaxCarRig_splines2 i
 			else if e[1] == sp do
 			(
 				if e[2] == key1 and e[3] == key2 then tab = e[4]
-				else deleteItem MaxCarRig_splines i
+				else deleteItem MaxCarRig_splines2 i
 			)
 		)
 		if tab == undefined do
@@ -61,7 +61,7 @@ buttonText:"SCR"
 			-- so the car turns smoothly instead of snapping at each sample.
 			tans = for i = 1 to pts.count collect normalize (pts[amin pts.count (i + 1)] - pts[amax 1 (i - 1)])
 			tab = #(pts, lens, amax 0.001 total, tans)
-			append MaxCarRig_splines #(sp, key1, key2, tab)
+			append MaxCarRig_splines2 #(sp, key1, key2, tab)
 		)
 		tab
 	)
