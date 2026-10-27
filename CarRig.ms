@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.7.0" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.7.1" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
@@ -240,65 +240,98 @@ buttonText:"SCR"
 	(eulerAngles 0 0 (amax (-steerMax) (amin steerMax ang))) as quat
 )"
 
-		-- Body (Transform Script, parent-relative). Banking and dive/squat come from the car's real motion:
-		-- the rig's position one frame either side gives its acceleration. Sideways acceleration rolls the
-		-- body out of the turn (Bank, degrees per g); forward acceleration lifts the nose and braking dips it
-		-- (Dive / squat, degrees per g). With Realistic body motion on, these and the ground's rise, pitch and
-		-- roll are averaged over the last frames (Body lag), so the body settles a little late, like springs.
-		-- It is the same every time you scrub or render.
+		-- Body (Transform Script, parent-relative). Bank and dive/squat come from smooth sources, not the rig's
+		-- own position (its ground fit is bumpy, and measuring acceleration from it doubled the bumps):
+		--   cornering = speed (from the Progress keys) squared x how sharp the bend is (from the spline);
+		--   starting and stopping = the change of speed (from the Progress keys).
+		-- Each is averaged over a window of frames before and after (Bank ease, Stop/start ease), so the body
+		-- eases into and out of a lean. Sharper turns, faster cornering and harder stops lean more.
+		-- With Realistic body motion on, the body also follows the ground's rise, pitch and roll late (Body lag).
 		local bankScript = @"(
 	%SPLINEFNS%
 	local rest = %REST%
 	local metre = %METRE%
-	local dh = 0.0, dp = 0.0, dr = 0.0, n, i, j, w, wsum, tk, uk, pk, hh, pp, rr, h0, p0, r0, out
-	local mats = #(), now, acc, toG, ax = 0.0, ay = 0.0, axw = 0.0, ayw = 0.0, realistic, roll, pitch
+	local dh = 0.0, dp = 0.0, dr = 0.0, n, i, k, j, w, wsum, tk, uk, pk, hh, pp, rr, h0, p0, r0, out
+	local len, dirS, toG, sigB, sigP, nB, nP, nMax, prog = #(), idx, d0, d1, d2, v, q, ua, ub, ta, tb, kap, lon, lat
+	local sumB = 0.0, sumP = 0.0, wbs = 0.0, wps = 0.0, ax = 0.0, ay = 0.0, delta, mats = #(), realistic, roll, pitch
 	fn wrapU sp x = if isClosed sp 1 then (mod ((mod x 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 x))
-	realistic = rigCA.realistic and rigCA.bodyLag > 0.0
-	n = if realistic then ((amin 12 (ceil (rigCA.bodyLag * 2.0))) as integer) else 0
-	-- mats[j] is the rig at frame F + 2 - j: one frame ahead, now, then back over the lag window.
-	for j = 1 to n + 3 do append mats (at time ((F + 2 - j) as time) rig.transform)
-	now = mats[2]
-	-- units per frame squared to g
+	len = (splineTable sp)[3]
+	dirS = if rigCA.reverse then -1.0 else 1.0
 	toG = frameRate * frameRate / (metre * 9.81)
-	wsum = 0.0
-	hh = 0.0
-	pp = 0.0
-	rr = 0.0
-	for i = 0 to n do
+	sigB = amax 0.5 (rigCA.bankTime / 2.0)
+	sigP = amax 0.5 (rigCA.pitchTime / 2.0)
+	nB = (amin 30 (ceil (2.0 * sigB))) as integer
+	nP = (amin 30 (ceil (2.0 * sigP))) as integer
+	nMax = amax nB nP
+	-- prog[k + nMax + 2] is the travelled fraction at frame F + k
+	for k = -(nMax + 1) to nMax + 1 do append prog ((at time ((F + k) as time) progCtrl.value) / 100.0)
+	-- bends are measured over 1 m either side
+	delta = metre / len
+	for k = -nMax to nMax do
 	(
-		j = i + 2
-		w = if realistic then exp (-(i as float) / rigCA.bodyLag) else 1.0
-		acc = (mats[j - 1].row4 - 2.0 * mats[j].row4 + mats[j + 1].row4) * toG
-		axw += w * (dot acc (normalize now.row1))
-		ayw += w * (dot acc (normalize now.row2))
-		if realistic do
+		idx = k + nMax + 2
+		d0 = prog[idx - 1] * len
+		d1 = prog[idx] * len
+		d2 = prog[idx + 1] * len
+		if (abs k) <= nP do
+		(
+			lon = (d2 - 2.0 * d1 + d0) * toG
+			w = exp (-((k * k) / (sigP * sigP)))
+			sumP += w * lon
+			wps += w
+		)
+		if (abs k) <= nB do
+		(
+			v = (d2 - d0) / 2.0
+			q = prog[idx]
+			ua = wrapU sp (if rigCA.reverse then 1.0 - (q + delta) else q + delta)
+			ub = wrapU sp (if rigCA.reverse then 1.0 - (q - delta) else q - delta)
+			ta = dirS * (splineAt sp ua)[2]
+			tb = dirS * (splineAt sp ub)[2]
+			ta.z = 0.0
+			tb.z = 0.0
+			kap = if (length ta) < 0.001 or (length tb) < 0.001 then 0.0 else (atan2 ((cross tb ta).z) (dot tb ta)) * pi / 180.0 / (2.0 * metre)
+			lat = v * v * kap * toG
+			w = exp (-((k * k) / (sigB * sigB)))
+			sumB += w * lat
+			wbs += w
+		)
+	)
+	ax = sumP / wps
+	ay = sumB / wbs
+	realistic = rigCA.realistic and rigCA.bodyLag > 0.0 and rigCA.bodyFollow > 0.0
+	if realistic do
+	(
+		n = (amin 12 (ceil (rigCA.bodyLag * 2.0))) as integer
+		wsum = 0.0
+		hh = 0.0
+		pp = 0.0
+		rr = 0.0
+		for i = 0 to n do
 		(
 			tk = (F - i) as time
+			j = at time tk rig.transform
 			uk = (at time tk progCtrl.value) / 100.0
 			if rigCA.reverse do uk = 1.0 - uk
 			pk = (splineAt sp (wrapU sp uk))[1]
-			hh += w * (mats[j].row4.z - pk.z)
-			pp += w * (asin (amax (-1.0) (amin 1.0 (normalize mats[j].row1).z)))
-			rr += w * (asin (amax (-1.0) (amin 1.0 (normalize mats[j].row2).z)))
+			w = exp (-(i as float) / rigCA.bodyLag)
+			hh += w * (j.row4.z - pk.z)
+			pp += w * (asin (amax (-1.0) (amin 1.0 (normalize j.row1).z)))
+			rr += w * (asin (amax (-1.0) (amin 1.0 (normalize j.row2).z)))
+			wsum += w
 			if i == 0 do
 			(
-				h0 = mats[j].row4.z - pk.z
-				p0 = asin (amax (-1.0) (amin 1.0 (normalize mats[j].row1).z))
-				r0 = asin (amax (-1.0) (amin 1.0 (normalize mats[j].row2).z))
+				h0 = j.row4.z - pk.z
+				p0 = asin (amax (-1.0) (amin 1.0 (normalize j.row1).z))
+				r0 = asin (amax (-1.0) (amin 1.0 (normalize j.row2).z))
 			)
 		)
-		wsum += w
-	)
-	ax = axw / wsum
-	ay = ayw / wsum
-	if realistic and rigCA.bodyFollow > 0.0 do
-	(
 		dh = rigCA.bodyFollow * (hh / wsum - h0)
 		dp = rigCA.bodyFollow * (pp / wsum - p0)
 		dr = rigCA.bodyFollow * (rr / wsum - r0)
 	)
 	-- Turning left pulls the car left (ay above 0): the body leans right, left side up = positive roll.
-	-- Speeding up (ax above 0) lifts the nose; braking dips it. Capped so a sudden start cannot flip it.
+	-- Speeding up (ax above 0) lifts the nose; braking dips it. Capped so nothing can flip the car.
 	roll = amax (-15.0) (amin 15.0 (bank * ay)) + dr
 	pitch = amax (-10.0) (amin 10.0 (rigCA.diveSquat * ax)) + dp
 	-- Roll about X, pitch about Y (nose up is negative about Y).
@@ -336,7 +369,7 @@ buttonText:"SCR"
 )"
 
 		-- The controls on the rig's "Car Rig" modifier. All are animatable.
-		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4f96)
+		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4f97)
 		(
 			parameters main rollout:params
 			(
@@ -345,6 +378,8 @@ buttonText:"SCR"
 				steerMax type:#float ui:spSteer default:35.0
 				bank type:#float ui:spBank default:4.0
 				diveSquat type:#float ui:spDive default:3.0
+				bankTime type:#float ui:spBankTime default:10.0
+				pitchTime type:#float ui:spPitchTime default:8.0
 				rayUp type:#worldUnits ui:spRay default:200.0
 				reverse type:#boolean ui:cbReverse default:false
 				spin type:#float ui:spSpin default:1.0
@@ -361,6 +396,8 @@ buttonText:"SCR"
 				spinner spSteer "Max steer (deg)" range:[0, 89, 35]
 				spinner spBank "Bank (deg per g)" range:[-45, 45, 4]
 				spinner spDive "Dive / squat (deg per g)" range:[-45, 45, 3]
+				spinner spBankTime "Bank ease (frames)" range:[1, 60, 10]
+				spinner spPitchTime "Stop/start ease (frames)" range:[1, 60, 8]
 				spinner spRay "Ray start height" type:#worldunits range:[0, 1e6, 200]
 				checkbox cbReverse "Reverse along spline"
 				spinner spSpin "Tyre spin x" range:[-100, 100, 1]
@@ -372,7 +409,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.7.0"
+		local toolVersion = "0.7.1"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
