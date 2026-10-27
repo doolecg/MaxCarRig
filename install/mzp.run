@@ -1,6 +1,6 @@
 name "V1 Simple Car Rig"
 description "Car rig that follows a spline and sits on ground geometry. Adds the SCR button under V1_Scripts."
-version 0.91
+version 0.92
 run "CarRig.ms"
 drop "CarRig.ms"
 clear temp on MAX exit

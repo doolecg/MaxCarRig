@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.9.1" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.9.2" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
@@ -498,16 +498,16 @@ buttonText:"SCR"
 				)
 				group "Bank (turns)"
 				(
-					spinner spBank "Deg per g" range:[-45, 45, 4] fieldwidth:56
+					spinner spBank "Deg per g" range:[-500, 500, 4] fieldwidth:56
 					spinner spBankTime "Ease frames" range:[1, 60, 10] fieldwidth:56
-					spinner spMaxBank "Max deg" range:[0, 45, 6] fieldwidth:56
+					spinner spMaxBank "Max deg" range:[0, 90, 6] fieldwidth:56
 				)
 				group "Dive / squat (stop, start)"
 				(
-					spinner spDive "Deg per g" range:[-45, 45, 3] fieldwidth:56
+					spinner spDive "Deg per g" range:[-500, 500, 3] fieldwidth:56
 					spinner spStartTime "Start ease" range:[1, 60, 10] fieldwidth:56
 					spinner spPitchTime "Stop ease" range:[1, 60, 6] fieldwidth:56
-					spinner spMaxPitch "Max deg" range:[0, 45, 4] fieldwidth:56
+					spinner spMaxPitch "Max deg" range:[0, 90, 4] fieldwidth:56
 				)
 				group "Wheels"
 				(
@@ -532,7 +532,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.9.1"
+		local toolVersion = "0.9.2"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -912,7 +912,7 @@ buttonText:"SCR"
 		(
 			spinner spAhead "Look ahead" range:[0, 1e6, 100] type:#worldunits across:3
 			spinner spSteer "Max steer (deg)" range:[0, 89, 35]
-			spinner spBank "Bank (deg per g)" range:[-45, 45, 4]
+			spinner spBank "Bank (deg per g)" range:[-500, 500, 4]
 		)
 		checkbox cbRigLayer "Put the rig and car on their own layer (untick to leave them where they are)" checked:true
 		button btnBuild "Build rig" width:165 height:28 across:3
