@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.7.1" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.8.0" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
@@ -409,7 +409,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.7.1"
+		local toolVersion = "0.8.0"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -789,8 +789,9 @@ buttonText:"SCR"
 			spinner spBank "Bank (deg per g)" range:[-45, 45, 4]
 		)
 		checkbox cbRigLayer "Put the rig and car on their own layer (untick to leave them where they are)" checked:true
-		button btnBuild "Build rig" width:250 height:28 across:2
-		button btnRemove "Remove selected rig" width:250 height:28
+		button btnBuild "Build rig" width:165 height:28 across:3
+		button btnRefresh "Refresh selected rig" width:165 height:28
+		button btnRemove "Remove selected rig" width:165 height:28
 		group "Bake"
 		(
 			radiobuttons rbBakeRange labels:#("Timeline", "Custom range") columns:2 align:#left across:3
@@ -806,6 +807,42 @@ buttonText:"SCR"
 			label lblA0 "(c) 2026 Visualisation One. All rights reserved." align:#left
 			label lblA1 "Provided \"as is\", without warranty. To the extent permitted by law, the authors are" align:#left
 			label lblA2 "not liable for any loss or damage from using it. Back up your work." align:#left
+		)
+
+		-- Build stores what each rig was built from on the rig itself, so Refresh can rebuild it the same way.
+		-- Handles are written as "n12_15_0" (a leading letter keeps getUserProp from reading it as a number).
+		fn handlesText nodes = (
+			local s = "n"
+			for i = 1 to nodes.count do s += (if i > 1 then "_" else "") + (if isValidNode nodes[i] then nodes[i].handle else 0) as string
+			s
+		)
+		fn nodesFrom txt = (
+			local parts = filterString ((txt as string) + "") "n_"
+			for h in parts collect maxOps.getNodeByHandle (h as integer)
+		)
+		-- Reads a user property as raw text (getUserProp would try to turn "n12_15" into a value).
+		fn rawProp node key = (
+			local hit = undefined, p
+			for l in filterString (getUserPropBuffer node) "\r\n" where hit == undefined do (
+				p = findString l "="
+				if p != undefined and trimRight (trimLeft (substring l 1 (p - 1))) == key do hit = trimLeft (substring l (p + 1) -1)
+			)
+			hit
+		)
+		fn saveBuildInfo root cars path grounds bottom fwdIndex mode wheels usePivot useLayer = (
+			setUserProp root "MaxCarRig_inCars" (handlesText cars)
+			setUserProp root "MaxCarRig_inPath" (handlesText #(path))
+			setUserProp root "MaxCarRig_inGrounds" (handlesText grounds)
+			setUserProp root "MaxCarRig_inBottom" (handlesText #(bottom))
+			setUserProp root "MaxCarRig_inWheels" (handlesText wheels)
+			setUserProp root "MaxCarRig_inMode" mode
+			setUserProp root "MaxCarRig_inFwd" fwdIndex
+			setUserProp root "MaxCarRig_inPivot" usePivot
+			setUserProp root "MaxCarRig_inLayer" useLayer
+		)
+		fn rigParams root = (
+			local m = (for x in root.modifiers where classOf x == EmptyModifier collect x)[1]
+			if m == undefined then undefined else custAttributes.get m 1
 		)
 
 		fn refreshUI = (
@@ -1215,12 +1252,70 @@ buttonText:"SCR"
 						local root = buildRig carNodes pathShape grounds bottomNode fwdUse mode spRay.value \
 							wheels (ddCentre.selection == 1) spAhead.value spSteer.value spBank.value
 						if cbRigLayer.checked do moveToRigLayer root
+						saveBuildInfo root carNodes pathShape grounds bottomNode fwdUse mode wheels (ddCentre.selection == 1) cbRigLayer.checked
 						select root
 						logLine ("  built: " + root.name + ", children: " + names (withDescendants #(root)))
 					)
 					catch (
 						logLine ("  build failed: " + getCurrentException())
 						messageBox ("Build failed:\n" + getCurrentException() + "\n\nLog: " + logPath) title:"Car Rig"
+					)
+				)
+			)
+		)
+
+		-- Rebuilds the selected rig from what it was built with, keeping every Car Rig modifier setting and the
+		-- Progress keys. The spline and ground are read fresh, so edits to them are picked up.
+		on btnRefresh pressed do (
+			local root, ca, saved, names, cars, path, grounds, bottom, wheels, mode, fwdIndex, usePivot, useLayer, newRoot, newCa, c, v, i
+			global MaxCarRig_grids, MaxCarRig_splines3
+			root = (for o in selection where getUserProp o "MaxCarRig" == true collect o)[1]
+			if root == undefined then messageBox "Select a rig first (the ..._CarRig rectangle)." title:"Car Rig"
+			else if rawProp root "MaxCarRig_inCars" == undefined then messageBox "This rig was built with an older version. Remove it and build it once more; after that Refresh works." title:"Car Rig"
+			else (
+				cars = for n in nodesFrom (rawProp root "MaxCarRig_inCars") where isValidNode n collect n
+				path = (nodesFrom (rawProp root "MaxCarRig_inPath"))[1]
+				grounds = for n in nodesFrom (rawProp root "MaxCarRig_inGrounds") where isValidNode n collect n
+				bottom = (nodesFrom (rawProp root "MaxCarRig_inBottom"))[1]
+				wheels = for n in nodesFrom (rawProp root "MaxCarRig_inWheels") collect (if isValidNode n then n else undefined)
+				mode = getUserProp root "MaxCarRig_inMode"
+				fwdIndex = getUserProp root "MaxCarRig_inFwd"
+				usePivot = getUserProp root "MaxCarRig_inPivot" == true
+				useLayer = getUserProp root "MaxCarRig_inLayer" == true
+				if not isValidNode path or not isValidNode bottom or cars.count == 0 then
+					messageBox "The spline, the BOTTOM helper or the car of this rig no longer exists. Build it again." title:"Car Rig"
+				else (
+					-- Keep every modifier setting: animated ones as a copy of their controller (keys included).
+					ca = rigParams root
+					names = #(#progress, #lookAhead, #steerMax, #bank, #rayUp, #spin, #suspension, #travel, #diveSquat, #bankTime, #pitchTime, #bodyFollow, #bodyLag, #reverse, #realistic)
+					saved = #()
+					for n in names do (
+						c = try (ca[n].controller) catch (undefined)
+						v = try (getProperty ca n) catch (undefined)
+						append saved #(n, (if c != undefined then copy c else undefined), v)
+					)
+					logLine ("Refresh " + root.name + ": mode " + mode as string + ", " + cars.count as string + " car parts, " + grounds.count as string + " grounds")
+					undo "Refresh car rig" on (
+						try (
+							removeRig root
+							-- Fresh spline and ground lookups.
+							MaxCarRig_grids = undefined
+							MaxCarRig_splines3 = undefined
+							newRoot = buildRig cars path grounds bottom fwdIndex mode spRay.value wheels usePivot spAhead.value spSteer.value spBank.value
+							newCa = rigParams newRoot
+							for e in saved where e[3] != undefined do (
+								if e[2] != undefined then (try (newCa[e[1]].controller = e[2]) catch ())
+								else (try (setProperty newCa e[1] e[3]) catch ())
+							)
+							if useLayer do moveToRigLayer newRoot
+							saveBuildInfo newRoot cars path grounds bottom fwdIndex mode wheels usePivot useLayer
+							select newRoot
+							logLine ("  refreshed: " + newRoot.name)
+						)
+						catch (
+							logLine ("  refresh failed: " + getCurrentException())
+							messageBox ("Refresh failed:\n" + getCurrentException() + "\n\nLog: " + logPath) title:"Car Rig"
+						)
 					)
 				)
 			)
