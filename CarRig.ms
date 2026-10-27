@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.8.1" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.8.2" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
@@ -399,29 +399,45 @@ buttonText:"SCR"
 				bodyFollow type:#float ui:spFollow default:0.6
 				bodyLag type:#float ui:spLag default:4.0
 			)
+			-- Short labels in groups: the command panel is narrow and long labels get cut off.
 			rollout params "Car Rig"
 			(
-				spinner spProgress "Progress %" range:[-1e6, 1e6, 0]
-				spinner spAhead "Look ahead" type:#worldunits range:[0, 1e6, 100]
-				spinner spSteer "Max steer (deg)" range:[0, 89, 35]
-				spinner spBank "Bank (deg per g)" range:[-45, 45, 4]
-				spinner spDive "Dive / squat (deg per g)" range:[-45, 45, 3]
-				spinner spBankTime "Bank ease (frames)" range:[1, 60, 10]
-				spinner spPitchTime "Stop/start ease (frames)" range:[1, 60, 8]
-				spinner spMaxBank "Max bank (deg)" range:[0, 45, 6]
-				spinner spMaxPitch "Max dive / squat (deg)" range:[0, 45, 4]
-				spinner spRay "Ray start height" type:#worldunits range:[0, 1e6, 200]
-				checkbox cbReverse "Reverse along spline"
-				spinner spSpin "Tyre spin x" range:[-100, 100, 1]
-				spinner spSusp "Suspension" range:[0, 1, 1]
-				spinner spTravel "Travel" type:#worldunits range:[0, 1e6, 100]
-				checkbox cbRealistic "Realistic body motion"
-				spinner spFollow "Body follow" range:[0, 1, 0.6]
-				spinner spLag "Body lag (frames)" range:[0, 12, 4]
+				group "Drive"
+				(
+					spinner spProgress "Progress %" range:[-1e6, 1e6, 0] fieldwidth:56
+					spinner spAhead "Look ahead" type:#worldunits range:[0, 1e6, 100] fieldwidth:56
+					spinner spSteer "Max steer" range:[0, 89, 35] fieldwidth:56
+					checkbox cbReverse "Reverse along spline"
+				)
+				group "Bank (turns)"
+				(
+					spinner spBank "Deg per g" range:[-45, 45, 4] fieldwidth:56
+					spinner spBankTime "Ease frames" range:[1, 60, 10] fieldwidth:56
+					spinner spMaxBank "Max deg" range:[0, 45, 6] fieldwidth:56
+				)
+				group "Dive / squat (stop, start)"
+				(
+					spinner spDive "Deg per g" range:[-45, 45, 3] fieldwidth:56
+					spinner spPitchTime "Ease frames" range:[1, 60, 8] fieldwidth:56
+					spinner spMaxPitch "Max deg" range:[0, 45, 4] fieldwidth:56
+				)
+				group "Wheels"
+				(
+					spinner spSpin "Tyre spin x" range:[-100, 100, 1] fieldwidth:56
+					spinner spSusp "Suspension" range:[0, 1, 1] fieldwidth:56
+					spinner spTravel "Travel" type:#worldunits range:[0, 1e6, 100] fieldwidth:56
+					spinner spRay "Ray height" type:#worldunits range:[0, 1e6, 200] fieldwidth:56
+				)
+				group "Body"
+				(
+					checkbox cbRealistic "Realistic motion"
+					spinner spFollow "Follow" range:[0, 1, 0.6] fieldwidth:56
+					spinner spLag "Lag frames" range:[0, 12, 4] fieldwidth:56
+				)
 			)
 		)
 
-		local toolVersion = "0.8.1"
+		local toolVersion = "0.8.2"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
