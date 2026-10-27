@@ -2,6 +2,11 @@
 
 The why behind decisions, and the results of any tests that informed them. The bible says what was decided; this says why. Newest first.
 
+## Steering from an aim null, one shared controller (2026-10-27)
+- **Decision:** front wheels steer towards a null placed Look ahead units further along the spline; one Rotation Script instance drives both steer helpers.
+- **Why:** doole asked for a visible null to look at, and for both wheels locked to the same direction. Sharing one controller makes it impossible for them to differ. Wheels are linked under steer helpers so their own controllers are left alone.
+- **Bank** follows the steer angle rather than path curvature: simple, and it goes to zero on straights.
+
 ## Rig maths in a Transform Script controller (2026-10-27)
 - **Decision:** the rig root gets a Transform Script controller holding all the ground-fit code, with the path helper and ground objects added as script nodes.
 - **Why:** the scene keeps working on any PC without the tool installed, and it updates live while scrubbing. A scripted plugin or a callback would need the tool loaded.

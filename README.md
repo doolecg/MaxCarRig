@@ -16,12 +16,18 @@ That's it. The car now follows the spline from start to end over the active time
 
 | Capability | What you get |
 | --- | --- |
-| Spline follow | A blue `<car>_CarRig_Path` helper with a Path Constraint (Follow, constant speed). Animate its Percent to change timing. |
+| Spline follow | The car rides the spline at constant speed. Progress % on the rig's Car Rig modifier is keyed 0 to 100 over the timeline; re-key it to change timing. |
+| Simple mode | The car just rides the spline, pitched along it, at the BOTTOM height. No ground, steering or bank. |
 | Body mode | Rays go down from the BOTTOM helper; the car sits on the hit point, tilted to the surface. |
 | Per-wheel mode | One ray under each of four wheels; the car is fitted to the plane through the four hits, which is steadier on bumpy ground. |
-| Several ground objects | The highest hit under each ray wins, so roads on top of terrain work. |
+| Front wheel steering | An orange `<car>_CarRig_Aim` null rides the spline Look ahead units in front. Both front wheels share one steering controller, so they always turn the same way, up to Max steer. |
+| Bank | The body rolls with the steer angle on a `_CarRig_Bank` helper at axle height. Positive Bank leans out of the turn, negative leans in. |
+| Wheel centre | Steering and wheel contacts use each wheel's pivot point or its bounding box centre, your choice. |
+| Include or exclude ground | Include: only listed objects are ground. Exclude: every visible geometry object except the list and the car (a snapshot taken at Build). |
+| Auto size | Rig helpers are sized from the car and wheel size. |
 | No plugin needed to open scenes | The rig is a Transform Script controller saved in the .max file. |
-| Remove rig | Unlinks the car (back to its old parent), deletes the rig helpers. Undo works. |
+| Car Rig modifier | The green `<car>_CarRig` rectangle round the car carries a Car Rig modifier with Progress %, Look ahead, Max steer, Bank and Ray start height. All live and animatable. |
+| Remove rig | Unlinks the car and wheels (back to their old parents), deletes the rig helpers. Undo works. |
 
 ## Settings
 
