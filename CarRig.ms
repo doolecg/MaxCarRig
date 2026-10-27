@@ -136,25 +136,43 @@ buttonText:"SCR"
 )"
 
 		-- Steering (Rotation Script). One instance drives both front wheels, so they always turn together.
-		-- The rig X axis can end up pointing out of the car rear (Per wheel mode flips it and the car with it).
-		-- If the aim is behind X, the angle is measured from -X, so steering is right either way round.
+		-- The angle comes only from the spline: the travel direction at the car versus the line from the
+		-- front axle to the look-ahead point. No rig, world or car-front axes are involved, so it cannot
+		-- be thrown off by which way the car or its pivots face. Positive = turn left, about the car up axis.
 		local steerScript = @"(
-	local a = aimNode.pos * inverse rig.transform
-	local d = a - %FRONT%
-	local ang = 0.0
-	if ((abs d.x) + (abs d.y)) > 0.001 do ang = if a.x < 0 then atan2 (-d.y) (-d.x) else atan2 d.y d.x
+	local len, u, s, uf, ua, t, v, ang, k
+	fn wrapU sp x = if isClosed sp 1 then (mod ((mod x 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 x))
+	len = amax 0.001 (curveLength sp 1)
+	s = if rigCA.reverse then -1.0 else 1.0
+	u = progress / 100.0
+	if rigCA.reverse do u = 1.0 - u
+	uf = wrapU sp (u + s * %FRONTDIST% / len)
+	ua = wrapU sp (u + s * ahead / len)
+	t = s * (in coordsys world lengthTangent sp 1 (wrapU sp u))
+	v = (in coordsys world lengthInterp sp 1 ua) - (in coordsys world lengthInterp sp 1 uf)
+	t.z = 0.0
+	v.z = 0.0
+	ang = if (length v) < 0.001 or (length t) < 0.001 then 0.0 else atan2 ((cross t v).z) (dot t v)
 	(eulerAngles 0 0 (amax (-steerMax) (amin steerMax ang))) as quat
 )"
 
-		-- Body bank (Rotation Script): roll follows the steer angle. Positive Bank leans out of the turn.
+		-- Body bank (Rotation Script): roll follows the same steer angle. Positive Bank leans out of the turn.
 		local bankScript = @"(
-	local a = aimNode.pos * inverse rig.transform
-	local d = a - %FRONT%
-	local ang = 0.0
-	local facing = if a.x < 0 then -1.0 else 1.0
-	if ((abs d.x) + (abs d.y)) > 0.001 do ang = if a.x < 0 then atan2 (-d.y) (-d.x) else atan2 d.y d.x
-	local t = if steerMax < 0.001 then 0.0 else amax (-1.0) (amin 1.0 (ang / steerMax))
-	(eulerAngles (facing * bank * t) 0 0) as quat
+	local len, u, s, uf, ua, t, v, ang, k
+	fn wrapU sp x = if isClosed sp 1 then (mod ((mod x 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 x))
+	len = amax 0.001 (curveLength sp 1)
+	s = if rigCA.reverse then -1.0 else 1.0
+	u = progress / 100.0
+	if rigCA.reverse do u = 1.0 - u
+	uf = wrapU sp (u + s * %FRONTDIST% / len)
+	ua = wrapU sp (u + s * ahead / len)
+	t = s * (in coordsys world lengthTangent sp 1 (wrapU sp u))
+	v = (in coordsys world lengthInterp sp 1 ua) - (in coordsys world lengthInterp sp 1 uf)
+	t.z = 0.0
+	v.z = 0.0
+	ang = if (length v) < 0.001 or (length t) < 0.001 then 0.0 else atan2 ((cross t v).z) (dot t v)
+	k = if steerMax < 0.001 then 0.0 else amax (-1.0) (amin 1.0 (ang / steerMax))
+	(eulerAngles (bank * k) 0 0) as quat
 )"
 
 		-- Tyre spin (Rotation Script, one per wheel): distance travelled / radius, so the tyre rolls
@@ -288,6 +306,14 @@ buttonText:"SCR"
 		-- A part picked inside a closed group stands for that whole group (a wheel group: rim, tyre, brake).
 		fn partOf o = if isGroupMember o and not isOpenGroupMember o and o.parent != undefined and isGroupHead o.parent then o.parent else o
 
+		fn addSteerInputs ctrl path ca = (
+			ctrl.AddNode "sp" path
+			ctrl.AddTarget "progress" ca[#progress].controller
+			ctrl.AddTarget "ahead" ca[#lookAhead].controller
+			ctrl.AddTarget "steerMax" ca[#steerMax].controller
+			ctrl.AddObject "rigCA" ca
+		)
+
 		fn rigHelper nm tm sz col isBox = (
 			local h = Point name:(uniqueName nm) transform:tm size:sz box:isBox cross:(not isBox) \
 				axisTripod:false centerMarker:false wirecolor:col
@@ -373,18 +399,14 @@ buttonText:"SCR"
 				bankH.parent = root
 				bc = rotation_script()
 				bankH.rotation.controller = bc
-				bc.AddNode "rig" root
-				bc.AddNode "aimNode" aim
-				bc.AddTarget "steerMax" ca[#steerMax].controller
+				addSteerInputs bc path ca
 				bc.AddTarget "bank" ca[#bank].controller
-				bc.script = substituteString bankScript "%FRONT%" (front as string)
+				bc.script = substituteString bankScript "%FRONTDIST%" (front.x as string)
 
 				if steering do (
 					sc = rotation_script()
-					sc.AddNode "rig" root
-					sc.AddNode "aimNode" aim
-					sc.AddTarget "steerMax" ca[#steerMax].controller
-					sc.script = substituteString steerScript "%FRONT%" (front as string)
+					addSteerInputs sc path ca
+					sc.script = substituteString steerScript "%FRONTDIST%" (front.x as string)
 					for i = 1 to 2 do (
 						st = copy tm
 						st.row4 = wheelCentre wheels[i] usePivot
@@ -516,6 +538,7 @@ buttonText:"SCR"
 		)
 		button btnBuild "Build rig" width:230 height:28
 		button btnRemove "Remove selected rig" width:230
+		button btnCheck "Check steering (selected rig)" width:230
 		button btnSpeed "Speed test (selected rig)" width:230
 		button btnLog "Open log" width:230
 		group "About"
@@ -642,6 +665,31 @@ buttonText:"SCR"
 				for i = 1 to carParts.count do carParts[i].isHidden = wasHidden[i]
 				sliderTime = tNow
 				messageBox ("Speed test done. Press Open log and send me the Speed test lines.") title:"Car Rig"
+			)
+		)
+		-- Writes the real numbers behind the steering at the current frame, for bug reports.
+		on btnCheck pressed do (
+			local root, tm, h, aimH, a, all
+			root = (for o in selection where getUserProp o "MaxCarRig" == true collect o)[1]
+			if root == undefined then messageBox "Select a rig first (the ..._CarRig rectangle)." title:"Car Rig"
+			else (
+				tm = root.transform
+				all = withDescendants #(root)
+				h = getUserProp root "MaxCarRig_aim"
+				aimH = if h == undefined then undefined else maxOps.getNodeByHandle h
+				logLine ("Check steering on " + root.name + " at frame " + sliderTime as string)
+				logLine ("  rig pos " + tm.row4 as string + ", X " + tm.row1 as string + ", Y " + tm.row2 as string + ", Z " + tm.row3 as string)
+				if isValidNode aimH do (
+					a = aimH.pos * inverse tm
+					logLine ("  aim world " + aimH.pos as string + ", aim in rig space " + a as string)
+				)
+				for n in all where matchPattern n.name pattern:"*_CarRig_Steer*" do (
+					logLine ("  " + n.name + ": local rotation " + (n.rotation.controller.value as eulerAngles) as string + ", world X " + n.transform.row1 as string)
+					logLine ("    script: " + substituteString (substituteString n.rotation.controller.script "\n" " ") "\t" "")
+				)
+				for n in all where matchPattern n.name pattern:"*_CarRig_Spin*" do
+					logLine ("  " + n.name + ": world X " + n.transform.row1 as string + ", Y " + n.transform.row2 as string + ", Z " + n.transform.row3 as string)
+				messageBox "Steering check written. Press Open log and send me the Check steering lines." title:"Car Rig"
 			)
 		)
 		on btnLog pressed do (
