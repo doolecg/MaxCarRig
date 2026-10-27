@@ -26,7 +26,7 @@ That's it. The car now follows the spline from start to end over the active time
 | Include or exclude ground | Include: only listed objects are ground. Exclude: every visible geometry object except the list and the car (a snapshot taken at Build). |
 | Auto size | Rig helpers are sized from the car and wheel size. |
 | No plugin needed to open scenes | The rig is a Transform Script controller saved in the .max file. |
-| Car Rig modifier | The green `<car>_CarRig` rectangle round the car carries a Car Rig modifier with Progress %, Look ahead, Max steer, Bank and Ray start height. All live and animatable. |
+| Car Rig modifier | The green `<car>_CarRig` rectangle round the car carries a Car Rig modifier with Progress %, Look ahead, Max steer, Bank, Ray start height and Reverse along spline (drive from the last vertex to the first, nose first). All live. |
 | Remove rig | Unlinks the car and wheels (back to their old parents), deletes the rig helpers. Undo works. |
 
 ## Settings

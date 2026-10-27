@@ -44,9 +44,11 @@ buttonText:"SCR"
 		matrix3 (cross y z) y z pos
 	)
 	local u = progress / 100.0
+	if rigCA.reverse do u = 1.0 - u
 	u = if isClosed sp 1 then (mod ((mod u 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 u))
 	local p = lengthInterp sp 1 u
 	local fwd = normalize (lengthTangent sp 1 u)
+	if rigCA.reverse do fwd = -fwd
 	case mode of
 	(
 		1:
@@ -89,7 +91,8 @@ buttonText:"SCR"
 		-- Aim null (Position Script): Look ahead units further along the spline than the car.
 		local aimScript = @"(
 	local len = curveLength sp 1
-	local u = progress / 100.0 + (if len < 0.001 then 0.0 else ahead / len)
+	local a = if len < 0.001 then 0.0 else ahead / len
+	local u = if rigCA.reverse then 1.0 - progress / 100.0 - a else progress / 100.0 + a
 	u = if isClosed sp 1 then (mod ((mod u 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 u))
 	lengthInterp sp 1 u
 )"
@@ -110,7 +113,7 @@ buttonText:"SCR"
 )"
 
 		-- The controls on the rig's "Car Rig" modifier. All are animatable.
-		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4f91)
+		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4f92)
 		(
 			parameters main rollout:params
 			(
@@ -119,6 +122,7 @@ buttonText:"SCR"
 				steerMax type:#float ui:spSteer default:35.0
 				bank type:#float ui:spBank default:3.0
 				rayUp type:#worldUnits ui:spRay default:200.0
+				reverse type:#boolean ui:cbReverse default:false
 			)
 			rollout params "Car Rig"
 			(
@@ -127,6 +131,7 @@ buttonText:"SCR"
 				spinner spSteer "Max steer (deg)" range:[0, 89, 35]
 				spinner spBank "Bank (deg)" range:[-45, 45, 3]
 				spinner spRay "Ray start height" type:#worldunits range:[0, 1e6, 200]
+				checkbox cbReverse "Reverse along spline"
 			)
 		)
 
@@ -258,6 +263,7 @@ buttonText:"SCR"
 				ac.AddNode "sp" path
 				ac.AddTarget "progress" ca[#progress].controller
 				ac.AddTarget "ahead" ca[#lookAhead].controller
+				ac.AddObject "rigCA" ca
 				ac.script = aimScript
 				setUserProp root "MaxCarRig_aim" aim.handle
 
@@ -316,6 +322,7 @@ buttonText:"SCR"
 			ctrl.AddNode "sp" path
 			ctrl.AddTarget "progress" ca[#progress].controller
 			ctrl.AddTarget "rayUp" ca[#rayUp].controller
+			ctrl.AddObject "rigCA" ca
 			for i = 1 to grounds.count do ctrl.AddNode ("g" + i as string) grounds[i]
 			ctrl.script = s
 			root
@@ -327,13 +334,16 @@ buttonText:"SCR"
 				local h = getUserProp n "MaxCarRig_oldParent"
 				n.parent = if h == 0 then undefined else maxOps.getNodeByHandle h
 			)
-			for k in #("MaxCarRig_aim") do (
+			-- Delete the scripted nodes before the nodes their scripts read (aim, old path helper),
+			-- or Max re-evaluates a script whose target has gone and throws errors.
+			local extras = for k in #("MaxCarRig_aim", "MaxCarRig_path") collect (
 				local h = getUserProp root k
-				local n = if h == undefined then undefined else maxOps.getNodeByHandle h
-				if isValidNode n do delete n
+				if h == undefined then undefined else maxOps.getNodeByHandle h
 			)
+			clearSelection()
 			delete (for n in all where isValidNode n and getUserProp n "MaxCarRig_helper" == true collect n)
 			delete root
+			for n in extras where isValidNode n do delete n
 		)
 
 		group "1. Car"
@@ -420,10 +430,23 @@ buttonText:"SCR"
 			-- The car is usually still selected here; skip its parts so it never becomes its own ground.
 			local carAll = withDescendants (for n in carNodes where isValidNode n collect n)
 			local sel = for o in selection collect o
-			local added = for o in sel where geoFilt o and findItem groundList o == 0 and findItem carAll o == 0 collect o
+			local added = #(), skipped = #()
+			for o in sel do (
+				local why = case of (
+					(findItem groundList o != 0): undefined
+					(findItem carAll o != 0): "part of the car"
+					(not geoFilt o): "not geometry (" + (classOf o) as string + ")"
+					default: undefined
+				)
+				if why != undefined then append skipped (o.name + ": " + why)
+				else if findItem groundList o == 0 do append added o
+			)
 			join groundList added
-			logLine ("Ground add. Selected: " + names sel + " | added: " + names added + " | list now: " + names groundList)
+			logLine ("Ground add. Selected: " + names sel + " | added: " + names added + " | skipped: " + listText skipped + " | list now: " + names groundList)
 			refreshUI()
+			if sel.count == 0 then messageBox "Select the ground objects in the viewport first, then press Add selected." title:"Car Rig"
+			else if added.count == 0 and skipped.count > 0 do
+				messageBox ("Nothing added.\n\n" + listText skipped + "\n\nIf a ground object shows as part of the car, press Use selection as car again with only the car selected.") title:"Car Rig"
 		)
 		on btnGroundDel pressed do (
 			local valid = for g in groundList where isValidNode g collect g
