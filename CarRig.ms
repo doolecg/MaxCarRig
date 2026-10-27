@@ -30,14 +30,48 @@ buttonText:"SCR"
 	local offs = #(%OFFSETS%)
 	-- All locals up front: Max throws a Bad free thunk error for locals declared in a nested block and read in a loop.
 	local u, p, fwd, y, h, up, guess, hits, w, x, tm, mid, offMid
+	-- Ray tests use a voxel grid per ground object (RayMeshGridIntersect), built once and kept
+	-- in a global; plain intersectRay tests every face on every frame and makes playback lag.
+	-- A grid is rebuilt when its object moves or its face count changes.
+	global MaxCarRig_grids
+	fn gridFor g =
+	(
+		local rm, key, i
+		if MaxCarRig_grids == undefined do MaxCarRig_grids = #()
+		key = #(g.transform as string, (getPolygonCount g)[1])
+		for i = MaxCarRig_grids.count to 1 by -1 do
+		(
+			if not isValidNode MaxCarRig_grids[i][1] then deleteItem MaxCarRig_grids i
+			else if MaxCarRig_grids[i][1] == g do
+			(
+				if MaxCarRig_grids[i][2] == key[1] and MaxCarRig_grids[i][3] == key[2] then rm = MaxCarRig_grids[i][4]
+				else deleteItem MaxCarRig_grids i
+			)
+		)
+		if rm == undefined do
+		(
+			rm = RayMeshGridIntersect()
+			rm.Initialize 40
+			rm.addNode g
+			rm.buildGrid()
+			append MaxCarRig_grids #(g, key[1], key[2], rm)
+		)
+		rm
+	)
 	fn castDown grounds p rayUp =
 	(
-		local best = undefined, hit
-		local r = ray (p + [0,0,rayUp]) [0,0,-1]
+		local best = undefined, o, rm, n, i, d
+		o = p + [0,0,rayUp]
 		for g in grounds where isValidNode g and p.x >= g.min.x and p.x <= g.max.x and p.y >= g.min.y and p.y <= g.max.y do
 		(
-			hit = intersectRay g r
-			if hit != undefined and (best == undefined or hit.pos.z > best.pos.z) do best = hit
+			rm = gridFor g
+			n = rm.intersectRay o [0,0,-1] false
+			if n > 0 do
+			(
+				i = rm.getClosestHit()
+				d = rm.getHitDist i
+				if best == undefined or (o.z - d) > best.pos.z do best = ray (o - [0,0,d]) (rm.getHitNormal i)
+			)
 		)
 		best
 	)
