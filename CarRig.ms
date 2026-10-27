@@ -150,8 +150,15 @@ buttonText:"SCR"
 	(eulerAngles (bank * t) 0 0) as quat
 )"
 
+		-- Tyre spin (Rotation Script, one per wheel): distance travelled / radius, so the tyre rolls
+		-- without sliding. spin scales it: 1 = rolling, 0 = stopped, more = wheelspin.
+		local spinScript = @"(
+	local dist = progress / 100.0 * (curveLength sp 1)
+	(eulerAngles 0 (spin * dist / %RADIUS% * 180.0 / pi) 0) as quat
+)"
+
 		-- The controls on the rig's "Car Rig" modifier. All are animatable.
-		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4f92)
+		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4f93)
 		(
 			parameters main rollout:params
 			(
@@ -161,6 +168,7 @@ buttonText:"SCR"
 				bank type:#float ui:spBank default:3.0
 				rayUp type:#worldUnits ui:spRay default:200.0
 				reverse type:#boolean ui:cbReverse default:false
+				spin type:#float ui:spSpin default:1.0
 			)
 			rollout params "Car Rig"
 			(
@@ -170,6 +178,7 @@ buttonText:"SCR"
 				spinner spBank "Bank (deg)" range:[-45, 45, 3]
 				spinner spRay "Ray start height" type:#worldunits range:[0, 1e6, 200]
 				checkbox cbReverse "Reverse along spline"
+				spinner spSpin "Tyre spin x" range:[-100, 100, 1]
 			)
 		)
 
@@ -261,7 +270,8 @@ buttonText:"SCR"
 		-- declared inside if/else blocks and then read in a for-loop.
 		fn buildRig cars path grounds bottom fwdIndex mode rayUp wheels usePivot lookAhead steerMax bank = (
 			local picked, base, tm, inv, bb, carLen, carWid, carSize, wheelSize, root, m, ca, offs
-			local aim, ac, fl, fr, steering, front, axleZ, bankTm, bankH, bc, sc, st, sh, wheelParts, bodyNodes, c, s, ctrl
+			local aim, ac, fl, fr, steering, front, axleZ, bankTm, bankH, bc, sc, st, sh, wheelParts, bodyNodes, c, s, ctrl, spinH, spc, wheelHolder
+			local steerHs = #(undefined, undefined), corners = #("FL", "FR", "RL", "RR")
 
 			picked = for w in wheels where w != undefined collect w
 			base = (topLevel cars)[1].name
@@ -287,7 +297,7 @@ buttonText:"SCR"
 			addModifier root m
 			custAttributes.add m (paramsCA())
 			ca = custAttributes.get m 1
-			for p in #(#progress, #lookAhead, #steerMax, #bank, #rayUp) do ca[p].controller = bezier_float()
+			for p in #(#progress, #lookAhead, #steerMax, #bank, #rayUp, #spin) do ca[p].controller = bezier_float()
 			ca.lookAhead = lookAhead
 			ca.steerMax = steerMax
 			ca.bank = bank
@@ -351,10 +361,24 @@ buttonText:"SCR"
 						sh = rigHelper (base + (if i == 1 then "_CarRig_SteerFL" else "_CarRig_SteerFR")) st (wheelSize * 1.3) red true
 						sh.parent = root
 						sh.rotation.controller = sc
-						linkTo wheels[i] sh
+						steerHs[i] = sh
 					)
 				)
-				for i = 3 to 4 where isValidNode wheels[i] do linkTo wheels[i] root
+				-- Each wheel hangs from a spin helper at its centre, under its steer helper (front) or the root.
+				for i = 1 to 4 where isValidNode wheels[i] do (
+					wheelHolder = if i <= 2 and steering then steerHs[i] else root
+					st = copy tm
+					st.row4 = wheelCentre wheels[i] usePivot
+					spinH = rigHelper (base + "_CarRig_Spin" + corners[i]) st (wheelSize * 1.1) yellow false
+					spinH.parent = wheelHolder
+					spc = rotation_script()
+					spc.AddNode "sp" path
+					spc.AddTarget "progress" ca[#progress].controller
+					spc.AddTarget "spin" ca[#spin].controller
+					spc.script = substituteString spinScript "%RADIUS%" ((amax 0.001 (wheelRadius wheels[i])) as string)
+					spinH.rotation.controller = spc
+					linkTo wheels[i] spinH
+				)
 				-- Anything under a picked wheel (hubcaps, brakes) stays with that wheel.
 				wheelParts = withDescendants picked
 				bodyNodes = for n in cars where findItem wheelParts n == 0 collect n
@@ -545,7 +569,7 @@ buttonText:"SCR"
 		on pbRR picked o do (wheelNodes[4] = partOf o; pbRR.object = wheelNodes[4]; logLine ("Wheel RR: picked " + o.name + ", using " + wheelNodes[4].name))
 
 		on btnBuild pressed do (
-			local pivotGap
+			local pivotGap, fc, rc, dirv, fwdUse
 			local mode = rbMode.state
 			carNodes = for n in carNodes where isValidNode n collect n
 			groundList = for n in groundList where isValidNode n collect n
@@ -589,6 +613,17 @@ buttonText:"SCR"
 				if pivotGap > (w.max.z - w.min.z) * 0.25 do
 					logLine ("  warning: " + w.name + " pivot is " + pivotGap as string + " units from its centre. Use Wheel centre: Bounding box centre, or fix the pivot.")
 			)
+			-- With both front wheels picked, the wheels say where the front is; the dropdown is only a fallback.
+			-- A wrong dropdown made the rig face backwards in Per wheel mode, so the steering went to full lock.
+			fwdUse = ddFwd.selection
+			if mode > 1 and isValidNode wheels[1] and isValidNode wheels[2] and isValidNode bottomNode do (
+				fc = ((wheels[1].min + wheels[1].max) + (wheels[2].min + wheels[2].max)) / 4
+				rc = if isValidNode wheels[3] and isValidNode wheels[4] then ((wheels[3].min + wheels[3].max) + (wheels[4].min + wheels[4].max)) / 4 else bottomNode.pos
+				dirv = fc - rc
+				fwdUse = if (abs dirv.x) >= (abs dirv.y) then (if dirv.x > 0 then 1 else 2) else (if dirv.y > 0 then 3 else 4)
+				if fwdUse != ddFwd.selection do
+					logLine ("  front taken from the front wheels: " + ddFwd.items[fwdUse] + " (dropdown said " + ddFwd.selected + ")")
+			)
 			if err != undefined then (
 				logLine ("  stopped: " + err)
 				messageBox err title:"Car Rig"
@@ -596,7 +631,7 @@ buttonText:"SCR"
 			else (
 				undo "Build car rig" on (
 					try (
-						local root = buildRig carNodes pathShape grounds bottomNode ddFwd.selection mode spRay.value \
+						local root = buildRig carNodes pathShape grounds bottomNode fwdUse mode spRay.value \
 							wheels (ddCentre.selection == 1) spAhead.value spSteer.value spBank.value
 						select root
 						logLine ("  built: " + root.name + ", children: " + names (withDescendants #(root)))

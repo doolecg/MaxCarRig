@@ -21,6 +21,8 @@ That's it. The car now follows the spline from start to end over the active time
 | Body mode | Rays go down from the BOTTOM helper; the car sits on the hit point, tilted to the surface. |
 | Per-wheel mode | One ray under each of four wheels; the car is fitted to the plane through the four hits, which is steadier on bumpy ground. |
 | Front wheel steering | An orange `<car>_CarRig_Aim` null rides the spline Look ahead units in front. Both front wheels share one steering controller, so they always turn the same way, up to Max steer. |
+| Tyre spin | Each picked wheel rolls by distance travelled / its radius, on a yellow `_CarRig_Spin` helper at the wheel centre. Tyre spin x on the modifier scales it (0 stops, above 1 gives wheelspin). |
+| Front from wheels | With both front wheels picked, the rig works out which way the car faces from the wheels; the dropdown is only used without them. |
 | Bank | The body rolls with the steer angle on a `_CarRig_Bank` helper at axle height. Positive Bank leans out of the turn, negative leans in. |
 | Wheel centre | Steering and wheel contacts use each wheel's pivot point or its bounding box centre, your choice. |
 | Include or exclude ground | Include: only listed objects are ground. Exclude: every visible geometry object except the list and the car (a snapshot taken at Build). |
