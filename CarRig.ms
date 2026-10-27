@@ -28,7 +28,7 @@ buttonText:"SCR"
 	local mode = %MODE%
 	local grounds = #(%GROUNDS%)
 	local offs = #(%OFFSETS%)
-	-- All locals up front: Max throws "Bad free thunk" for locals declared in a nested block and read in a loop.
+	-- All locals up front: Max throws a Bad free thunk error for locals declared in a nested block and read in a loop.
 	local u, p, fwd, y, h, up, guess, hits, w, x, tm, mid, offMid
 	fn castDown grounds p rayUp =
 	(
