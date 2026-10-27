@@ -182,10 +182,10 @@ buttonText:"SCR"
 			)
 		)
 
-		-- Visualisation One brand colours, from visualisation.one: charcoal ink, cream, stone, rust accent.
+		-- Visualisation One brand colours, from visualisation.one: charcoal ink on cream.
 		-- Their typeface (ABC Arizona) is not free to ship, so the header uses Georgia, a serif on every Windows PC.
 		fn dnColour c = (dotNetClass "System.Drawing.Color").FromArgb c.r c.g c.b
-		local v1Ink = color 55 50 47, v1Cream = color 243 240 237, v1Stone = color 210 200 185, v1Rust = color 183 65 14
+		local v1Ink = color 55 50 47, v1Cream = color 243 240 237
 
 		fn shapeFilt o = superClassOf o == Shape
 		fn geoFilt o = superClassOf o == GeometryClass
@@ -249,19 +249,20 @@ buttonText:"SCR"
 			matrix3 x (cross z x) z bottom.pos
 		)
 
-		-- The tyre is the biggest mesh in a wheel group. Its box gives the true axle centre and radius;
-		-- the whole group's box is pulled off-centre by brakes and callipers.
+		fn isBrake n = matchPattern n.name pattern:"*brake*" or matchPattern n.name pattern:"*calip*" or matchPattern n.name pattern:"*callip*"
+		-- The tyre is the tallest mesh in a wheel group, so its box gives the true axle centre and radius.
+		-- Picking by height (not overall size) and skipping brakes matters: one brake mesh can span
+		-- the whole axle, and its centre is the middle of the car.
 		fn tyreOf w = (
 			local best = w, size = -1.0, sz
-			for n in withDescendants #(w) where superClassOf n == GeometryClass and not isGroupHead n do (
-				sz = length (n.max - n.min)
+			for n in withDescendants #(w) where superClassOf n == GeometryClass and not isGroupHead n and not isBrake n do (
+				sz = n.max.z - n.min.z
 				if sz > size do (size = sz; best = n)
 			)
 			best
 		)
 		fn wheelCentre w usePivot = if usePivot then w.pos else (local t = tyreOf w; (t.min + t.max) / 2)
 		fn wheelRadius w = (local t = tyreOf w; (t.max.z - t.min.z) / 2)
-		fn isBrake n = matchPattern n.name pattern:"*brake*" or matchPattern n.name pattern:"*calip*" or matchPattern n.name pattern:"*callip*"
 
 		fn linkTo n parent = (
 			setUserProp n "MaxCarRig_oldParent" (if n.parent == undefined then 0 else n.parent.handle)
@@ -308,7 +309,7 @@ buttonText:"SCR"
 
 			-- The root is a rectangle round the car's footprint: helpers cannot hold modifiers, shapes can.
 			root = Rectangle name:(uniqueName (base + "_CarRig")) transform:tm \
-				width:(carLen * 1.15) length:(carWid * 1.25) wirecolor:(color 183 65 14)
+				width:(carLen * 1.15) length:(carWid * 1.25) wirecolor:(color 210 200 185)
 			setUserProp root "MaxCarRig" true
 			m = EmptyModifier name:"Car Rig"
 			addModifier root m
@@ -333,7 +334,7 @@ buttonText:"SCR"
 			if mode == 1 then (
 				for n in topLevel cars do linkTo n root
 			) else (
-				aim = rigHelper (base + "_CarRig_Aim") (matrix3 1) (wheelSize * 0.8) orange true
+				aim = rigHelper (base + "_CarRig_Aim") (matrix3 1) (wheelSize * 0.8) (color 243 240 237) true
 				ac = position_script()
 				aim.position.controller = ac
 				ac.AddNode "sp" path
@@ -356,7 +357,7 @@ buttonText:"SCR"
 				for w in picked do axleZ += ((wheelCentre w usePivot) * inv).z / picked.count
 				bankTm = copy tm
 				bankTm.row4 = tm.pos + [0, 0, axleZ]
-				bankH = rigHelper (base + "_CarRig_Bank") bankTm (carSize * 0.4) (color 150 60 200) false
+				bankH = rigHelper (base + "_CarRig_Bank") bankTm (carSize * 0.4) (color 150 138 122) false
 				bankH.parent = root
 				bc = rotation_script()
 				bankH.rotation.controller = bc
@@ -375,7 +376,7 @@ buttonText:"SCR"
 					for i = 1 to 2 do (
 						st = copy tm
 						st.row4 = wheelCentre wheels[i] usePivot
-						sh = rigHelper (base + (if i == 1 then "_CarRig_SteerFL" else "_CarRig_SteerFR")) st (wheelSize * 1.3) red true
+						sh = rigHelper (base + (if i == 1 then "_CarRig_SteerFL" else "_CarRig_SteerFR")) st (wheelSize * 1.3) (color 196 120 90) true
 						sh.parent = root
 						sh.rotation.controller = sc
 						steerHs[i] = sh
@@ -386,7 +387,7 @@ buttonText:"SCR"
 					wheelHolder = if i <= 2 and steering then steerHs[i] else root
 					st = copy tm
 					st.row4 = wheelCentre wheels[i] usePivot
-					spinH = rigHelper (base + "_CarRig_Spin" + corners[i]) st (wheelSize * 1.1) yellow false
+					spinH = rigHelper (base + "_CarRig_Spin" + corners[i]) st (wheelSize * 1.1) (color 225 214 198) false
 					spinH.parent = wheelHolder
 					spc = rotation_script()
 					spc.AddNode "sp" path
@@ -480,7 +481,7 @@ buttonText:"SCR"
 		)
 		group "Wheels (front pair steers)"
 		(
-			dropdownlist ddCentre "Wheel centre" items:#("Pivot point", "Bounding box centre")
+			dropdownlist ddCentre "Wheel centre" items:#("Tyre centre", "Pivot point")
 			pickbutton pbFL "Front left wheel" autoDisplay:true width:230
 			pickbutton pbFR "Front right wheel" autoDisplay:true width:230
 			pickbutton pbRL "Rear left wheel" autoDisplay:true width:230
@@ -515,18 +516,18 @@ buttonText:"SCR"
 
 		on MaxCarRig_UI open do (
 			local fontStyle = dotNetClass "System.Drawing.FontStyle"
-			lblBrand.BackColor = dnColour v1Ink
-			lblBrand.ForeColor = dnColour v1Stone
+			lblBrand.BackColor = dnColour v1Cream
+			lblBrand.ForeColor = dnColour v1Ink
 			lblBrand.Font = dotNetObject "System.Drawing.Font" "Georgia" 8 fontStyle.Regular
 			lblBrand.Text = "VISUALISATION ONE"
-			lblTitle.BackColor = dnColour v1Ink
-			lblTitle.ForeColor = dnColour v1Cream
+			lblTitle.BackColor = dnColour v1Cream
+			lblTitle.ForeColor = dnColour v1Ink
 			lblTitle.Font = dotNetObject "System.Drawing.Font" "Georgia" 15 fontStyle.Regular
 			lblTitle.Text = "Simple Car Rig"
 			btnBuild.Text = "Build rig"
 			btnBuild.FlatStyle = (dotNetClass "System.Windows.Forms.FlatStyle").Flat
 			btnBuild.FlatAppearance.BorderSize = 0
-			btnBuild.BackColor = dnColour v1Rust
+			btnBuild.BackColor = dnColour v1Ink
 			btnBuild.ForeColor = dnColour v1Cream
 			btnBuild.Font = dotNetObject "System.Drawing.Font" "Georgia" 11 fontStyle.Regular
 			logLine ("Opened. Max version " + ((maxVersion())[1] as string) + ", log: " + logPath)
@@ -694,14 +695,14 @@ buttonText:"SCR"
 			for w in wheels where isValidNode w do (
 				pivotGap = distance w.pos ((w.min + w.max) / 2)
 				if pivotGap > (w.max.z - w.min.z) * 0.25 do
-					logLine ("  warning: " + w.name + " pivot is " + pivotGap as string + " units from its centre. Use Wheel centre: Bounding box centre, or fix the pivot.")
+					logLine ("  warning: " + w.name + " pivot is " + pivotGap as string + " units from its centre. Use Wheel centre: Tyre centre, or fix the pivot.")
 			)
 			-- With both front wheels picked, the wheels say where the front is; the dropdown is only a fallback.
 			-- A wrong dropdown made the rig face backwards in Per wheel mode, so the steering went to full lock.
 			fwdUse = ddFwd.selection
 			if mode > 1 and isValidNode wheels[1] and isValidNode wheels[2] and isValidNode bottomNode do (
-				fc = ((wheels[1].min + wheels[1].max) + (wheels[2].min + wheels[2].max)) / 4
-				rc = if isValidNode wheels[3] and isValidNode wheels[4] then ((wheels[3].min + wheels[3].max) + (wheels[4].min + wheels[4].max)) / 4 else bottomNode.pos
+				fc = (wheelCentre wheels[1] false + wheelCentre wheels[2] false) / 2
+				rc = if isValidNode wheels[3] and isValidNode wheels[4] then (wheelCentre wheels[3] false + wheelCentre wheels[4] false) / 2 else bottomNode.pos
 				dirv = fc - rc
 				fwdUse = if (abs dirv.x) >= (abs dirv.y) then (if dirv.x > 0 then 1 else 2) else (if dirv.y > 0 then 3 else 4)
 				if fwdUse != ddFwd.selection do
@@ -715,7 +716,7 @@ buttonText:"SCR"
 				undo "Build car rig" on (
 					try (
 						local root = buildRig carNodes pathShape grounds bottomNode fwdUse mode spRay.value \
-							wheels (ddCentre.selection == 1) spAhead.value spSteer.value spBank.value
+							wheels (ddCentre.selection == 2) spAhead.value spSteer.value spBank.value
 						select root
 						logLine ("  built: " + root.name + ", children: " + names (withDescendants #(root)))
 					)
@@ -737,7 +738,7 @@ buttonText:"SCR"
 
 	on execute do (
 		try (destroyDialog MaxCarRig_UI) catch ()
-		try (createDialog MaxCarRig_UI bgcolor:(color 55 50 47) fgcolor:(color 243 240 237)) catch (createDialog MaxCarRig_UI)
+		try (createDialog MaxCarRig_UI bgcolor:(color 243 240 237) fgcolor:(color 55 50 47)) catch (createDialog MaxCarRig_UI)
 	)
 )
 
