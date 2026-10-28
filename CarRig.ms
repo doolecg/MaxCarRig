@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.15.0" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.16.0" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local wheelTags = #( \
@@ -888,7 +888,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.15.0"
+		local toolVersion = "0.16.0"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -1841,11 +1841,9 @@ ca.metre = units.decodeValue "1m"
 
 			local err = case of (
 				(carNodes.count == 0): "Set the car first: select it and press Use selection as car."
-				(not isValidNode pathShape): "Pick the spline."
 				(not isValidNode bottomNode): "Create or pick the BOTTOM helper."
 				(findItem carAll bottomNode != 0): "BOTTOM must not be part of the car."
 				((for n in carAll where n.parent != undefined and (getUserProp n.parent "MaxCarRig" == true or getUserProp n.parent "MaxCarRig_helper" == true) collect n).count > 0): "This car is already rigged. Remove the rig first."
-				(mode > 1 and grounds.count == 0): "No ground to sit on: add ground objects to the include list."
 				((for g in grounds where findItem carAll g != 0 collect g).count > 0): \
 					("These are both car and ground: " + listText (for g in grounds where findItem carAll g != 0 collect g.name) + \
 					". Take them off the ground list, or press Use selection as car again with only the car selected.")
@@ -1889,6 +1887,20 @@ ca.metre = units.decodeValue "1m"
 			else (
 				undo "Build car rig" on (
 					try (
+						-- No spline yet: a straight 30 m one from the car forwards, so the rig can be built now and
+						-- given its real spline (and ground) later from its modifier. With no ground the car rides
+						-- on the spline.
+						if not isValidNode pathShape do (
+							local fwdTm = startFrame bottomNode fwdUse
+							pathShape = SplineShape name:(uniqueName ((topLevel carNodes)[1].name + "_Path")) wirecolor:yellow
+							addNewSpline pathShape
+							addKnot pathShape 1 #corner #line fwdTm.row4
+							addKnot pathShape 1 #corner #line (fwdTm.row4 + fwdTm.row1 * (units.decodeValue "30m"))
+							updateShape pathShape
+							pbPath.object = pathShape
+							logLine ("  no spline picked: made " + pathShape.name)
+						)
+						if grounds.count == 0 do logLine "  no ground: the car rides on the spline until ground is added"
 						local root = buildRig carNodes pathShape grounds bottomNode fwdUse mode spRay.value \
 							wheels (ddCentre.selection == 1) spAhead.value spSteer.value spBank.value
 						if cbRigLayer.checked do moveToRigLayer root
