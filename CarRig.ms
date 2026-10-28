@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.19.2" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.20.0" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local wheelTags = #( \
@@ -315,43 +315,52 @@ buttonText:"SCR"
 	-- grid along the direction of travel, half a radius apart), so the lift grows smoothly as the tyre moves
 	-- instead of jumping when one ray crosses an edge. Returns the contact as a ray (point lifted to where
 	-- the tyre rests, ground normal under the centre), or undefined if there is no ground.
-	fn tyreDown grounds p fwd r hw rayUp =
+	fn tyreDown grounds p fwd r hw rayUp steps soft =
 	(
-		local mid, fh, side, st, u, k0, k1, k, x, q, h, z, best = undefined, lines, ln, xPrev, zPrev
+		local mid, fh, side, re, st, u, k0, k1, k, x, q, h, best = undefined, lines, ln, xs, zs, i, xa, xb, za, zb, m, xm, cand, c, z
 		mid = castDown grounds p rayUp
 		if r <= 0.0 or (length [fwd.x, fwd.y, 0.0]) < 0.0001 then mid
 		else
 		(
 			fh = normalize [fwd.x, fwd.y, 0.0]
 			side = [-fh.y, fh.x, 0.0]
-			st = r / 2.0
+			-- Lift smoothing makes the shape that meets the ground a larger, softer circle (like a tyre that
+			-- gives a little), so the wheel starts to rise earlier and climbs more gently. Flat ground is unchanged.
+			re = r * (1.0 + (amax 0.0 soft))
+			st = 2.0 * re / (amax 2 steps)
 			u = dot p fh
-			k0 = (ceil ((u - r) / st)) as integer
-			k1 = (floor ((u + r) / st)) as integer
+			k0 = (floor ((u - re) / st)) as integer
+			k1 = (ceil ((u + re) / st)) as integer
 			lines = if hw > 0.0 then #(-hw, hw) else #(0.0)
-			-- On flat ground the highest point under the round tyre steps from one sample to the next, which made
-			-- the wheel bob about 3% of its radius at every sample. The ground straight under the centre,
-			-- blended between the two samples either side, is also a candidate, so flat ground stays flat.
+			-- The ground between two samples is taken as a straight slope, and the circle is rolled over those
+			-- slopes: the highest the tyre must sit on each slope is found exactly (where the slope touches the
+			-- circle), so the lift changes smoothly as the tyre moves instead of stepping from sample to sample.
 			for ln in lines do
 			(
-				xPrev = undefined
+				xs = #()
+				zs = #()
 				for k = k0 to k1 do
 				(
 					x = k * st - u
-					q = p + fh * x + side * ln
-					h = castDown grounds q rayUp
-					if h == undefined then xPrev = undefined
-					else
+					h = castDown grounds (p + fh * x + side * ln) rayUp
+					append xs x
+					append zs (if h == undefined then undefined else h.pos.z)
+				)
+				for i = 1 to xs.count - 1 where zs[i] != undefined and zs[i + 1] != undefined do
+				(
+					m = (zs[i + 1] - zs[i]) / (xs[i + 1] - xs[i])
+					xa = amax (-re) xs[i]
+					xb = amin re xs[i + 1]
+					if xa < xb do
 					(
-						z = h.pos.z - (r - sqrt (amax 0.0 (r * r - x * x)))
-						if best == undefined or z > best do best = z
-						if xPrev != undefined and xPrev <= 0.0 and x > 0.0 do
+						xm = m * re / (sqrt (1.0 + m * m))
+						cand = #(xa, xb)
+						if xm > xa and xm < xb do append cand xm
+						for c in cand do
 						(
-							z = zPrev + (h.pos.z - zPrev) * (0.0 - xPrev) / (x - xPrev)
-							if z > best do best = z
+							z = zs[i] + m * (c - xs[i]) - (re - sqrt (amax 0.0 (re * re - c * c)))
+							if best == undefined or z > best do best = z
 						)
-						xPrev = x
-						zPrev = h.pos.z
 					)
 				)
 			)
@@ -391,7 +400,7 @@ buttonText:"SCR"
 		)
 		2:
 		(
-			h = tyreDown grounds p fwd rigCA.wheelR 0.0 rayUp
+			h = tyreDown grounds p fwd rigCA.wheelR 0.0 rayUp (rigCA.tyreSteps / 2) rigCA.liftSmooth
 			if h == undefined then frameFrom fwd [0,0,1] p
 			else
 			(
@@ -408,7 +417,7 @@ buttonText:"SCR"
 			for i = 1 to offs.count do
 			(
 				w = offs[i] * guess
-				h = tyreDown grounds w fwd tyres[i].radius 0.0 rayUp
+				h = tyreDown grounds w fwd tyres[i].radius 0.0 rayUp (rigCA.tyreSteps / 2) rigCA.liftSmooth
 				append hits (if h == undefined then w else h.pos)
 				append missed (h == undefined)
 			)
@@ -604,7 +613,7 @@ buttonText:"SCR"
 	%RAYFNS%
 	tm = rig.transform
 	c = contact * tm
-	h = tyreDown grounds c tm.row1 tyreShape.radius (tyreShape.height / 2.0) rayUp
+	h = tyreDown grounds c tm.row1 tyreShape.radius (tyreShape.height / 2.0) rayUp rigCA.tyreSteps rigCA.liftSmooth
 	dz = 0.0
 	if h != undefined do dz = dot (h.pos - c) (normalize tm.row3)
 	dz = suspension * (amax (-travel) (amin travel dz))
@@ -667,6 +676,8 @@ buttonText:"SCR"
 				rayUp type:#worldUnits ui:spRay default:200.0
 				-- The tyre radius, set at build; suspension presets set Travel as a share of it.
 				wheelR type:#worldUnits default:350.0
+				tyreSteps type:#integer ui:spSteps default:12
+				liftSmooth type:#float ui:spSmooth default:0.3
 			)
 			parameters pBody rollout:rBody
 			(
@@ -965,6 +976,10 @@ buttonText:"SCR"
 				spinner spSusp "Suspension" range:[0, 1, 1] fieldwidth:64
 				spinner spTravel "Travel" type:#worldunits range:[0, 1e6, 100] fieldwidth:64
 				spinner spRay "Ray height" type:#worldunits range:[0, 1e6, 200] fieldwidth:64
+				-- Ground samples along each tyre (more is more exact over kerbs, but slower to play back).
+				spinner spSteps "Collision detail" type:#integer range:[4, 48, 12] fieldwidth:64
+				-- How soft the tyre meets kerbs and bumps: 0 is the true tyre size, higher rises earlier and gentler.
+				spinner spSmooth "Lift smoothing" range:[0, 2, 0.3] fieldwidth:64
 			)
 
 			rollout rBody "Car Rig: body"
@@ -985,7 +1000,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.19.2"
+		local toolVersion = "0.20.0"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -1291,6 +1306,7 @@ ca.metre = units.decodeValue "1m"
 					psc.AddTarget "suspension" (getPropertyController ca "suspension")
 					psc.AddTarget "travel" (getPropertyController ca "travel")
 					psc.AddObject "tyreShape" cyl.baseObject
+					psc.AddObject "rigCA" ca
 					s = substituteString suspScript "%RAYFNS%" rayFns
 					s = substituteString s "%GROUNDS%" (listText (for g = 1 to grounds.count collect ("g" + g as string)))
 					s = substituteString s "%REST%" (rest as string)
@@ -2105,7 +2121,7 @@ ca.metre = units.decodeValue "1m"
 			else (
 				-- Keep every modifier setting: animated ones as a copy of their controller (keys included).
 				ca = rigParams root
-				keep = #(#progress, #lookAhead, #steerMax, #bank, #rayUp, #spin, #suspension, #travel, #diveSquat, #bankTime, #pitchTime, #startTime, #bodyFollow, #bodyLag, #reverse, #realistic, #maxBank, #maxPitch, #cornerSlow, #cornerSpeed, #cornerRadius, #brakeG, #easeOn, #easeStart, #easeStop, #speedSet, #speedUnit, #carType, #suspType, #lookType, #speedLocked, #kerbSlow)
+				keep = #(#progress, #lookAhead, #steerMax, #bank, #rayUp, #spin, #suspension, #travel, #diveSquat, #bankTime, #pitchTime, #startTime, #bodyFollow, #bodyLag, #reverse, #realistic, #maxBank, #maxPitch, #cornerSlow, #cornerSpeed, #cornerRadius, #brakeG, #easeOn, #easeStart, #easeStop, #speedSet, #speedUnit, #carType, #suspType, #lookType, #speedLocked, #kerbSlow, #tyreSteps, #liftSmooth)
 				saved = #()
 				for n in keep do (
 					c = try (getPropertyController ca (n as string)) catch (undefined)
