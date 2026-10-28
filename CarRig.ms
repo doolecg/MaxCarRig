@@ -12,9 +12,14 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.13.0" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.14.0" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
+		local wheelTags = #( \
+			#("FRONT_LEFT", "FL", "LEFT_FRONT", "WHEEL_FL", "FRONT_LEFT_WHEEL"), \
+			#("FRONT_RIGHT", "FR", "RIGHT_FRONT", "WHEEL_FR", "FRONT_RIGHT_WHEEL"), \
+			#("BACK_LEFT", "REAR_LEFT", "RL", "BL", "LEFT_REAR", "LEFT_BACK", "WHEEL_RL", "BACK_LEFT_WHEEL", "REAR_LEFT_WHEEL"), \
+			#("BACK_RIGHT", "REAR_RIGHT", "RR", "BR", "RIGHT_REAR", "RIGHT_BACK", "WHEEL_RR", "BACK_RIGHT_WHEEL", "REAR_RIGHT_WHEEL"))
 		local pathShape = undefined, bottomNode = undefined
 		-- RadioButtons cannot read their labels back, so the log uses these.
 		local modeNames = #("Simple", "Body", "Per wheel"), groundNames = #("Include list", "Exclude list")
@@ -408,6 +413,7 @@ buttonText:"SCR"
 	local dh = 0.0, dp = 0.0, dr = 0.0, n, i, k, j, w, wsum, tk, uk, pk, hh, pp, rr, h0, p0, r0, out
 	local len, dirS, toG, sigB, sigP, sigS, nB, nP, nS, nMax, prog = #(), idx, d0, d1, d2, v, q, ua, ub, ta, tb, kap, lon, lat
 	local sumB = 0.0, sumP = 0.0, sumS = 0.0, wbs = 0.0, wps = 0.0, wss = 0.0, ax = 0.0, ay = 0.0, delta, mats = #(), realistic, roll, pitch
+	local hs = #(), ps = #(), rs = #(), wn, wd, zeta, e, st, fade, half, c
 	fn wrapU sp x = if isClosed sp 1 then (mod ((mod x 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 x))
 	len = (splineTable sp)[3]
 	dirS = if rigCA.reverse then -1.0 else 1.0
@@ -465,33 +471,41 @@ buttonText:"SCR"
 	realistic = rigCA.realistic and rigCA.bodyLag > 0.0 and rigCA.bodyFollow > 0.0
 	if realistic do
 	(
-		n = (amin 12 (ceil (rigCA.bodyLag * 2.0))) as integer
-		wsum = 0.0
-		hh = 0.0
-		pp = 0.0
-		rr = 0.0
-		for i = 0 to n do
+		-- The body rides on a damped spring: when the ground under the rig steps (a kerb, a bump) the body
+		-- catches up a little late, goes slightly past and settles, without wobbling on. Each past frame's change
+		-- in height, pitch and roll is weighed by how far a spring would still be from it now (step response
+		-- minus 1). Damping 0.6 gives about a tenth of overshoot and one soft bounce. Body lag sets the
+		-- spring's speed: about 2 pi x Body lag frames per bounce. The oldest frames fade out of the window
+		-- so a change leaving it never pops.
+		zeta = 0.6
+		wn = 1.0 / rigCA.bodyLag
+		wd = wn * sqrt (1.0 - zeta * zeta)
+		n = (amin 20 (ceil (rigCA.bodyLag * 8.0))) as integer
+		half = n / 2.0
+		for i = 0 to n + 1 do
 		(
 			tk = (F - i) as time
 			j = at time tk rig.transform
 			uk = travelAt sp (F - i) rigCA
 			if rigCA.reverse do uk = 1.0 - uk
 			pk = (splineAt sp (wrapU sp uk))[1]
-			w = exp (-(i as float) / rigCA.bodyLag)
-			hh += w * (j.row4.z - pk.z)
-			pp += w * (asin (amax (-1.0) (amin 1.0 (normalize j.row1).z)))
-			rr += w * (asin (amax (-1.0) (amin 1.0 (normalize j.row2).z)))
-			wsum += w
-			if i == 0 do
-			(
-				h0 = j.row4.z - pk.z
-				p0 = asin (amax (-1.0) (amin 1.0 (normalize j.row1).z))
-				r0 = asin (amax (-1.0) (amin 1.0 (normalize j.row2).z))
-			)
+			append hs (j.row4.z - pk.z)
+			append ps (asin (amax (-1.0) (amin 1.0 (normalize j.row1).z)))
+			append rs (asin (amax (-1.0) (amin 1.0 (normalize j.row2).z)))
 		)
-		dh = rigCA.bodyFollow * (hh / wsum - h0)
-		dp = rigCA.bodyFollow * (pp / wsum - p0)
-		dr = rigCA.bodyFollow * (rr / wsum - r0)
+		for i = 0 to n do
+		(
+			e = exp (-zeta * wn * i)
+			st = 1.0 - e * ((cos (wd * i * 180.0 / pi)) + zeta / (sqrt (1.0 - zeta * zeta)) * (sin (wd * i * 180.0 / pi)))
+			fade = if i <= half then 1.0 else 0.5 + 0.5 * (cos (180.0 * (i - half) / (n + 1 - half)))
+			c = (st - 1.0) * fade
+			dh += c * (hs[i + 1] - hs[i + 2])
+			dp += c * (ps[i + 1] - ps[i + 2])
+			dr += c * (rs[i + 1] - rs[i + 2])
+		)
+		dh *= rigCA.bodyFollow
+		dp *= rigCA.bodyFollow
+		dr *= rigCA.bodyFollow
 	)
 	-- Turning left pulls the car left (ay above 0): the body leans right, left side up = positive roll.
 	-- Speeding up (ax above 0) lifts the nose; braking dips it. Capped so nothing can flip the car.
@@ -839,7 +853,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.13.0"
+		local toolVersion = "0.14.0"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -926,6 +940,7 @@ buttonText:"SCR"
 
 		fn linkTo n parent = (
 			setUserProp n "MaxCarRig_oldParent" (if n.parent == undefined then 0 else n.parent.handle)
+			setUserProp n "MaxCarRig_oldTM" (n.transform as string)
 			-- A group member must leave its group before it can follow a rig helper; Remove puts it back.
 			setUserProp n "MaxCarRig_wasGroupMember" (isGroupMember n)
 			-- detachNodesFromGroup refuses some nested members ("invalid input"); clearing the flag does the same job.
@@ -934,7 +949,13 @@ buttonText:"SCR"
 		)
 
 		-- A part picked inside a closed group stands for that whole group (a wheel group: rim, tyre, brake).
-		fn partOf o = if isGroupMember o and not isOpenGroupMember o and o.parent != undefined and isGroupHead o.parent then o.parent else o
+		-- Nested groups are climbed, but never up to the car's own top group, so a wheel group inside a
+		-- grouped car stays the wheel.
+		fn partOf o = (
+			local tops = topLevel (for n in carNodes where isValidNode n collect n)
+			while isGroupMember o and not isOpenGroupMember o and o.parent != undefined and isGroupHead o.parent and findItem tops o.parent == 0 do o = o.parent
+			o
+		)
 
 		fn addSteerInputs ctrl path ca = (
 			ctrl.AddNode "sp" path
@@ -1147,7 +1168,7 @@ ca.metre = units.decodeValue "1m"
 		)
 
 		fn removeRig root = (
-			local all, h, extras, oldLayer, lay, rigLayerName
+			local all, h, extras, oldLayer, lay, rigLayerName, moved, depths, d, p, i
 			all = withDescendants #(root)
 			rigLayerName = root.name
 			-- Back to the layers they came from (a layer called 0 reads back as a number, hence as string).
@@ -1166,6 +1187,12 @@ ca.metre = units.decodeValue "1m"
 				if getUserProp n "MaxCarRig_wasGroupMember" == true and n.parent != undefined and isGroupHead n.parent do
 					(try (attachNodesToGroup #(n) n.parent) catch (setGroupMember n true))
 			)
+			-- Every part goes back to where it was before the rig (the car's own spot, usually 0,0,0), parents
+			-- first so children are not moved twice. Rigs built before 0.13.1 have no record and stay put.
+			moved = for n in all where isValidNode n and getUserProp n "MaxCarRig_oldTM" != undefined collect n
+			depths = for n in moved collect (d = 0; p = n.parent; while p != undefined do (d += 1; p = p.parent); d)
+			with animate off for d = 0 to (if depths.count == 0 then -1 else amax depths) do
+				for i = 1 to moved.count where depths[i] == d do moved[i].transform = execute ((getUserProp moved[i] "MaxCarRig_oldTM") as string)
 			-- Delete the scripted nodes before the nodes their scripts read (aim, old path helper),
 			-- or Max re-evaluates a script whose target has gone and throws errors.
 			extras = #()
@@ -1478,11 +1505,6 @@ ca.metre = units.decodeValue "1m"
 		on btnAuto pressed do (
 			local body, w, surf, surfs, found = #(), missing = #(), i
 			local pbs = #(pbFL, pbFR, pbRL, pbRR), cornerNames = #("FL", "FR", "RL", "RR")
-			local wheelTags = #( \
-				#("FRONT_LEFT", "FL", "LEFT_FRONT", "WHEEL_FL", "FRONT_LEFT_WHEEL"), \
-				#("FRONT_RIGHT", "FR", "RIGHT_FRONT", "WHEEL_FR", "FRONT_RIGHT_WHEEL"), \
-				#("BACK_LEFT", "REAR_LEFT", "RL", "BL", "LEFT_REAR", "LEFT_BACK", "WHEEL_RL", "BACK_LEFT_WHEEL", "REAR_LEFT_WHEEL"), \
-				#("BACK_RIGHT", "REAR_RIGHT", "RR", "BR", "RIGHT_REAR", "RIGHT_BACK", "WHEEL_RR", "BACK_RIGHT_WHEEL", "REAR_RIGHT_WHEEL"))
 
 			body = findTagged #("BODY", "CAR_BODY")
 			if body != undefined then (
@@ -1601,7 +1623,17 @@ ca.metre = units.decodeValue "1m"
 		)
 
 		on btnCar pressed do (
+			local inside, w, i, pbs = #(pbFL, pbFR, pbRL, pbRR)
 			carNodes = for o in selection collect o
+			inside = withDescendants carNodes
+			for i = 1 to 4 do (
+				w = (for n in inside where findItem wheelTags[i] (tagOf n) != 0 collect n)[1]
+				if w != undefined do (
+					wheelNodes[i] = w
+					pbs[i].object = w
+					logLine ("Wheel " + i as string + " found inside the car: " + w.name)
+				)
+			)
 			lblCar.text = if carNodes.count == 0 then "No car set" else (carNodes.count as string + " object(s): " + carNodes[1].name)
 			logLine ("Car set: " + names carNodes)
 		)
