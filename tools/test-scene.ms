@@ -108,6 +108,15 @@
 	)
 
 	fn zFlat125 x y = 0.125
+
+	-- Kerb stones: the road-side top edge is rounded (50 mm radius, less on a dropped kerb), so a tyre rolls
+	-- over it instead of meeting a sharp corner. d is the distance in from the road edge.
+	fn roundEdge h d = (
+		local rr = amin 0.05 h
+		h - rr + sqrt (amax 0.0 (rr * rr - (rr - (amin d rr)) * (rr - (amin d rr))))
+	)
+	fn zKerbN x y = roundEdge (zPavN x y) (y - 3.65)
+	fn zKerbS x y = roundEdge 0.125 (-3.65 - y)
 	fn zFlat250 x y = 0.25
 
 	-- Spline through the points, z=0, smooth knots.
@@ -129,8 +138,10 @@
 
 		-- Ground (every name starts with CAR SURFACE, so Auto detect finds them all)
 		gridMesh "CAR SURFACE Road" (-70.0) 70.0 700 (-3.65) 3.65 4 zRoad (color 55 55 58) k
-		gridMesh "CAR SURFACE Pavement North" (-70.0) 70.0 700 3.65 5.65 4 zPavN (color 175 175 172) k
-		gridMesh "CAR SURFACE Pavement South" (-70.0) 70.0 700 (-5.65) (-3.65) 4 zFlat125 (color 175 175 172) k
+		gridMesh "CAR SURFACE Kerb North" (-70.0) 70.0 700 3.65 3.8 10 zKerbN (color 160 160 158) k
+		gridMesh "CAR SURFACE Pavement North" (-70.0) 70.0 700 3.8 5.65 4 zPavN (color 175 175 172) k
+		gridMesh "CAR SURFACE Kerb South" (-70.0) 70.0 700 (-3.8) (-3.65) 10 zKerbS (color 160 160 158) k
+		gridMesh "CAR SURFACE Pavement South" (-70.0) 70.0 700 (-5.65) (-3.8) 4 zFlat125 (color 175 175 172) k
 		gridMesh "CAR SURFACE Forecourt" (-22.0) 22.0 44 5.65 19.6 14 zFlat125 (color 185 180 170) k
 		gridMesh "CAR SURFACE Dropoff Kerb" (-15.0) 15.0 30 19.6 24.0 4 zFlat250 (color 195 190 180) k
 
