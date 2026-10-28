@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.12.1" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.12.2" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
@@ -687,8 +687,9 @@ buttonText:"SCR"
 			)
 
 			-- Drive and speed. The speed readout measures the rig's real motion (ease, corners and all) and turns
-			-- it into km/h and mph from the scene units. Set run from speed re-times the Progress keys so the car
-			-- cruises at that speed along this spline, allowing for the ease in and out.
+			-- it into km/h and mph from the scene units. Set run from speed moves only the last Progress key so the
+			-- car cruises at that speed along this spline, allowing for the ease in and out. The first key stays where
+			-- it is (frame 0 if there are no keys yet).
 			rollout rDrive "Car Rig: drive and speed"
 			(
 				local readSpeed
@@ -749,27 +750,43 @@ buttonText:"SCR"
 				)
 				on btnSetSpeed pressed do
 				(
-					local sp, len, mps, frames, c, t0, k
+					local sp, len, mps, frames, c, t0, v0, n, k, i
 					sp = maxOps.getNodeByHandle this.pathHandle
 					if not isValidNode sp then messageBox "The rig's spline is missing. Build the rig again." title:"Car Rig"
 					else
 					(
-						len = (curveLength sp 1) / (amax 0.0001 this.metre)
+						c = getPropertyController this "progress"
+						n = if c == undefined then 0 else c.keys.count
+						t0 = if n >= 2 then c.keys[1].time else 0f
+						v0 = if n >= 2 then c.keys[1].value else 0.0
+						-- Only the part of the spline still to drive counts when the first key is not at 0%.
+						len = (curveLength sp 1) / (amax 0.0001 this.metre) * (100.0 - v0) / 100.0
 						mps = if this.speedUnit == 2 then this.speedSet / 2.23694 else this.speedSet / 3.6
 						-- Cruise time, plus half of each ease (speeding up and slowing down average half speed).
 						frames = len / (amax 0.01 mps) * frameRate + (if this.easeOn then (this.easeStart + this.easeStop) / 2.0 else 0.0)
-						c = getPropertyController this "progress"
-						t0 = 0f
 						undo "Set run from speed" on
 						(
-							if c != undefined do deleteKeys c #allKeys
-							with animate on
+							if n >= 2 then
 							(
-								at time t0 this.progress = 0.0
-								at time (t0 + frames as time) this.progress = 100.0
+								-- keys between the first and last that would land on or after the new end are dropped
+								for i = n - 1 to 2 by -1 where c.keys[i].time >= t0 + frames as time do deleteKey c i
+								k = c.keys[c.keys.count]
+								k.time = t0 + frames as time
+								k.value = 100.0
+								k.inTangentType = #linear
+								k.outTangentType = #linear
 							)
-							c = getPropertyController this "progress"
-							if c != undefined do for k in c.keys do (k.inTangentType = #linear; k.outTangentType = #linear)
+							else
+							(
+								if c != undefined do deleteKeys c #allKeys
+								with animate on
+								(
+									at time t0 this.progress = 0.0
+									at time (t0 + frames as time) this.progress = 100.0
+								)
+								c = getPropertyController this "progress"
+								if c != undefined do for k in c.keys do (k.inTangentType = #linear; k.outTangentType = #linear)
+							)
 							if t0 + frames as time > animationRange.end do animationRange = interval (amin animationRange.start t0) (t0 + frames as time)
 							this.speedLocked = true
 							global MaxCarRig_rigCAs
@@ -822,7 +839,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.12.1"
+		local toolVersion = "0.12.2"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
