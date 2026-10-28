@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.21.0" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.22.0" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		-- Tyre collision shapes as the user left them (place, Radius, Height per wheel), handed from a rebuild
@@ -35,7 +35,7 @@ buttonText:"SCR"
 	-- a global. lengthInterp re-measures the whole spline on every call (about 100 ms on a long road), and
 	-- the rig asked several times a frame. The table is rebuilt when the spline moves, its knot count changes,
 	-- or its shape changes: a sum of its knots and handles is re-checked at most every 0.2 seconds.
-	global MaxCarRig_splines3
+	global MaxCarRig_splines4
 	fn splinePrint sp =
 	(
 		local fp = [0,0,0], i
@@ -44,14 +44,14 @@ buttonText:"SCR"
 	)
 	fn splineTable sp =
 	(
-		local tab, key1, key2, e, pts, lens, tans, ns, i, j, total, steps = 24, fp
-		if MaxCarRig_splines3 == undefined do MaxCarRig_splines3 = #()
+		local tab, key1, key2, e, pts, lens, tans, ns, i, j, total, steps = 24, fp, turns, a, b
+		if MaxCarRig_splines4 == undefined do MaxCarRig_splines4 = #()
 		key1 = sp.transform as string
 		key2 = numKnots sp 1
-		for i = MaxCarRig_splines3.count to 1 by -1 do
+		for i = MaxCarRig_splines4.count to 1 by -1 do
 		(
-			e = MaxCarRig_splines3[i]
-			if not isValidNode e[1] then deleteItem MaxCarRig_splines3 i
+			e = MaxCarRig_splines4[i]
+			if not isValidNode e[1] then deleteItem MaxCarRig_splines4 i
 			else if e[1] == sp do
 			(
 				if e[2] == key1 and e[3] == key2 then
@@ -61,10 +61,10 @@ buttonText:"SCR"
 					(
 						fp = splinePrint sp
 						if distance fp e[6] < 0.0001 then (e[5] = timeStamp(); tab = e[4])
-						else deleteItem MaxCarRig_splines3 i
+						else deleteItem MaxCarRig_splines4 i
 					)
 				)
-				else deleteItem MaxCarRig_splines3 i
+				else deleteItem MaxCarRig_splines4 i
 			)
 		)
 		if tab == undefined do
@@ -84,8 +84,16 @@ buttonText:"SCR"
 			-- A smooth direction at every point (from its two neighbours), blended between points,
 			-- so the car turns smoothly instead of snapping at each sample.
 			tans = for i = 1 to pts.count collect normalize (pts[amin pts.count (i + 1)] - pts[amax 1 (i - 1)])
-			tab = #(pts, lens, amax 0.001 total, tans)
-			append MaxCarRig_splines3 #(sp, key1, key2, tab, timeStamp(), splinePrint sp)
+			-- How far the road has turned (radians, left positive) from its start to every point.
+			turns = #(0.0)
+			for i = 2 to pts.count do
+			(
+				a = [tans[i - 1].x, tans[i - 1].y, 0.0]
+				b = [tans[i].x, tans[i].y, 0.0]
+				append turns (turns[i - 1] + (if (length a) < 0.0001 or (length b) < 0.0001 then 0.0 else (atan2 ((cross a b).z) (dot a b)) * pi / 180.0))
+			)
+			tab = #(pts, lens, amax 0.001 total, tans, turns)
+			append MaxCarRig_splines4 #(sp, key1, key2, tab, timeStamp(), splinePrint sp)
 		)
 		tab
 	)
@@ -258,6 +266,23 @@ buttonText:"SCR"
 		)
 		a = if lens[hi] > lens[lo] then (target - lens[lo]) / (lens[hi] - lens[lo]) else 0.0
 		#(pts[lo] + (pts[hi] - pts[lo]) * a, normalize (tab[4][lo] * (1.0 - a) + tab[4][hi] * a))
+	)
+	-- How far the road has turned (radians, left positive) from its start to fraction f.
+	fn turnAt sp f =
+	(
+		local tab, lens, target, lo, hi, mid, a
+		tab = splineTable sp
+		lens = tab[2]
+		target = f * tab[3]
+		lo = 1
+		hi = lens.count
+		while hi - lo > 1 do
+		(
+			mid = (lo + hi) / 2
+			if lens[mid] <= target then lo = mid else hi = mid
+		)
+		a = if lens[hi] > lens[lo] then (target - lens[lo]) / (lens[hi] - lens[lo]) else 0.0
+		tab[5][lo] * (1.0 - a) + tab[5][hi] * a
 	)"
 
 		-- Ground ray functions shared by the rig root and the suspension scripts (pasted in at build).
@@ -376,6 +401,7 @@ buttonText:"SCR"
 		local rootScript = @"(
 	local mode = %MODE%
 	local grounds = #(%GROUNDS%)
+	local wb = %WB%, rearD = %REAR%, dS, len
 	local offs = #(%OFFSETS%)
 	local tyres = #(%TYRES%)
 	-- All locals up front: Max throws a Bad free thunk error for locals declared in a nested block and read in a loop.
@@ -387,6 +413,7 @@ buttonText:"SCR"
 		local y = normalize (cross z x)
 		matrix3 (cross y z) y z pos
 	)
+	fn wrapU sp x = if isClosed sp 1 then (mod ((mod x 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 x))
 	u = travelAt sp F rigCA
 	if rigCA.reverse do u = 1.0 - u
 	u = if isClosed sp 1 then (mod ((mod u 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 u))
@@ -394,6 +421,18 @@ buttonText:"SCR"
 	p = sa[1]
 	fwd = sa[2]
 	if rigCA.reverse do fwd = -fwd
+	-- Grip: a real car's rear wheels roll along their line and never slide sideways, so the rear axle sits
+	-- on the spline and the car points along the spline there. The front swings slightly wide in a bend and
+	-- the front wheels steer to match (see the steering script), as on the road. Rigs without rear wheels keep
+	-- the car centred on the spline.
+	if wb > 0.0 do
+	(
+		dS = if rigCA.reverse then -1.0 else 1.0
+		len = (splineTable sp)[3]
+		sa = splineAt sp (wrapU sp (u - dS * rearD / len))
+		fwd = dS * sa[2]
+		p = sa[1] + fwd * rearD
+	)
 	case mode of
 	(
 		1:
@@ -458,20 +497,43 @@ buttonText:"SCR"
 		-- front axle to the look-ahead point. No rig, world or car-front axes are involved, so it cannot
 		-- be thrown off by which way the car or its pivots face. Positive = turn left, about the car up axis.
 		local steerScript = @"(
-	local len, u, s, uf, ua, t, v, ang, k
+	local len, u, s, uf, ua, t, v, ang, k, ur, rad, dn, kap
+	local wb = %WB%, rearD = %REAR%, side = %SIDE%
 	%SPLINEFNS%
 	fn wrapU sp x = if isClosed sp 1 then (mod ((mod x 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 x))
 	len = (splineTable sp)[3]
 	s = if rigCA.reverse then -1.0 else 1.0
 	u = travelAt sp F rigCA
 	if rigCA.reverse do u = 1.0 - u
-	uf = wrapU sp (u + s * %FRONTDIST% / len)
-	ua = wrapU sp (u + s * ahead / len)
-	t = s * (splineAt sp (wrapU sp u))[2]
-	v = (splineAt sp ua)[1] - (splineAt sp uf)[1]
-	t.z = 0.0
-	v.z = 0.0
-	ang = if (length v) < 0.001 or (length t) < 0.001 then 0.0 else atan2 ((cross t v).z) (dot t v)
+	if wb > 0.0 then
+	(
+		-- The rear axle follows the spline (as the rig root does), so the car turns about a point on the rear
+		-- axle line at the bend's radius there. Each front wheel points at right angles to the line from that
+		-- point, so it rolls without sliding, and the inner wheel turns a little more (Ackermann). side is this
+		-- wheel's offset to the left of the centre line; how sharp the bend is comes from the road's turn
+		-- over half a metre either side of the rear axle.
+		ur = wrapU sp (u - s * rearD / len)
+		k = (units.decodeValue "0.5m") / len
+		kap = ((turnAt sp (wrapU sp (ur + s * k))) - (turnAt sp (wrapU sp (ur - s * k)))) / (2.0 * k * len)
+		ang = 0.0
+		if (abs kap) > 0.0000001 do
+		(
+			rad = 1.0 / kap
+			dn = rad - side
+			ang = if (abs dn) < 0.001 then (if kap > 0.0 then 90.0 else -90.0) else atan (wb / dn)
+			if ang * kap < 0.0 do ang = if kap > 0.0 then 90.0 else -90.0
+		)
+	)
+	else
+	(
+		uf = wrapU sp (u + s * %FRONTDIST% / len)
+		ua = wrapU sp (u + s * ahead / len)
+		t = s * (splineAt sp (wrapU sp u))[2]
+		v = (splineAt sp ua)[1] - (splineAt sp uf)[1]
+		t.z = 0.0
+		v.z = 0.0
+		ang = if (length v) < 0.001 or (length t) < 0.001 then 0.0 else atan2 ((cross t v).z) (dot t v)
+	)
 	(eulerAngles 0 0 (amax (-steerMax) (amin steerMax ang))) as quat
 )"
 
@@ -629,7 +691,13 @@ buttonText:"SCR"
 		-- that points across the car (%AXIS%), so a wheel spins about its own axle.
 		local spinScript = @"(
 	%SPLINEFNS%
-	local dist = (travelAt sp F rigCA) * (splineTable sp)[3]
+	local q = travelAt sp F rigCA, dist, turn
+	-- Differential: in a bend the outer wheels roll further than the inner ones. Each wheel rolls the road's
+	-- length less its offset to the left times how far the car has turned (left turns positive), so the
+	-- outside wheels spin faster.
+	dist = q * (splineTable sp)[3]
+	turn = if rigCA.reverse then (turnAt sp (1.0 - q)) - (turnAt sp 1.0) else (turnAt sp q) - (turnAt sp 0.0)
+	dist -= %SIDE% * turn
 	((%AXIS% (%SIGN% * spin * dist / %RADIUS% * 180.0 / pi)) * %BASE%) as quat
 )"
 
@@ -1006,7 +1074,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.21.0"
+		local toolVersion = "0.22.0"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -1168,7 +1236,7 @@ buttonText:"SCR"
 		-- Every local is declared at the top: Max 2026 throws "Bad free thunk" for locals
 		-- declared inside if/else blocks and then read in a for-loop.
 		fn buildRig cars path grounds bottom fwdIndex mode rayUp wheels usePivot lookAhead steerMax bank = (
-			local picked, base, tm, inv, bb, carLen, carWid, carSize, wheelSize, root, m, ca, offs, lenText, suspH, psc, cw, rest, bankRest, b, tyreCyls = #(), later = #()
+			local picked, base, tm, inv, bb, carLen, carWid, carSize, wheelSize, root, m, ca, offs, lenText, suspH, psc, cw, rest, bankRest, b, tyreCyls = #(), later = #(), wb = 0.0, rearD = 0.0, rearC
 			-- The spline length is measured once here and written into the scripts: measuring it every frame
 			-- in every script was a large share of the playback cost. Rebuild the rig after editing the spline.
 			lenText = (amax 0.001 (curveLength path 1)) as string
@@ -1244,6 +1312,13 @@ ca.metre = units.decodeValue "1m"
 				-- Steer from the car centre line: the aim sits on the spline, which is the root X axis,
 				-- so a straight spline gives exactly zero steer even if the two wheels are not symmetric.
 				front.y = 0.0
+				-- Wheelbase and where the rear axle sits behind the rig root, for rear-axle tracking and steering.
+				if steering and isValidNode wheels[3] and isValidNode wheels[4] do (
+					rearC = ((wheelCentre wheels[3] usePivot + wheelCentre wheels[4] usePivot) / 2) * inv
+					wb = front.x - rearC.x
+					rearD = -rearC.x
+					if wb <= 0.0 do (wb = 0.0; rearD = 0.0)
+				)
 
 				-- Bank pivots at wheel centre height so the body rolls about its axle line, not the ground.
 				axleZ = 0.0
@@ -1262,10 +1337,13 @@ ca.metre = units.decodeValue "1m"
 				append later #(bankH, #transform, bc)
 
 				if steering do (
-					sc = rotation_script()
-					addSteerInputs sc path ca
-					sc.script = substituteString (substituteString steerScript "%FRONTDIST%" (front.x as string)) "%LEN%" lenText
 					for i = 1 to 2 do (
+						-- One script per front wheel: the inner wheel steers a little more (Ackermann).
+						sc = rotation_script()
+						addSteerInputs sc path ca
+						s = substituteString (substituteString steerScript "%FRONTDIST%" (front.x as string)) "%LEN%" lenText
+						s = substituteString (substituteString s "%WB%" (wb as string)) "%REAR%" (rearD as string)
+						sc.script = substituteString s "%SIDE%" ((((wheelCentre wheels[i] usePivot) * inv).y) as string)
 						st = copy tm
 						st.row4 = wheelCentre wheels[i] usePivot
 						sh = rigHelper (base + (if i == 1 then "_CarRig_SteerFL" else "_CarRig_SteerFR")) st (wheelSize * 1.3) (color 196 120 90) true
@@ -1337,6 +1415,7 @@ ca.metre = units.decodeValue "1m"
 					spc.AddTarget "spin" (getPropertyController ca "spin")
 					spc.AddObject "rigCA" ca
 					s = substituteString spinScript "%RADIUS%" ((amax 0.001 (wheelRadius wheels[i])) as string)
+					s = substituteString s "%SIDE%" ((((wheelCentre wheels[i] usePivot) * inv).y) as string)
 					s = substituteString s "%AXIS%" axisNames[axisK]
 					s = substituteString s "%SIGN%" (axisSign as string)
 					spc.script = substituteString (substituteString s "%BASE%" ("(" + baseRot as string + ")")) "%LEN%" lenText
@@ -1362,6 +1441,7 @@ ca.metre = units.decodeValue "1m"
 			s = substituteString (substituteString rootScript "%RAYFNS%" rayFns) "%MODE%" (mode as string)
 			s = substituteString s "%GROUNDS%" (listText (for i = 1 to grounds.count collect ("g" + i as string)))
 			s = substituteString s "%OFFSETS%" (listText offs)
+			s = substituteString (substituteString s "%WB%" (wb as string)) "%REAR%" (rearD as string)
 			s = substituteString s "%TYRES%" (if mode == 3 then "tyre1, tyre2, tyre3, tyre4" else "")
 			-- The helper scripts go on only now, with every wheel and body part linked. A script put on earlier
 			-- moved its helper at once (the suspension to the ground under the car, steering to the bend), and
@@ -1594,8 +1674,8 @@ ca.metre = units.decodeValue "1m"
 		-- when the tool opens and when a rig is built or refreshed.
 		fn onSplineChanged sp = (
 			local i, ca, len, oldLen
-			global MaxCarRig_splines3, MaxCarRig_plans, MaxCarRig_lens, MaxCarRig_rigCAs
-			if MaxCarRig_splines3 != undefined do for i = MaxCarRig_splines3.count to 1 by -1 where MaxCarRig_splines3[i][1] == sp do deleteItem MaxCarRig_splines3 i
+			global MaxCarRig_splines4, MaxCarRig_plans, MaxCarRig_lens, MaxCarRig_rigCAs
+			if MaxCarRig_splines4 != undefined do for i = MaxCarRig_splines4.count to 1 by -1 where MaxCarRig_splines4[i][1] == sp do deleteItem MaxCarRig_splines4 i
 			if MaxCarRig_plans != undefined do for i = MaxCarRig_plans.count to 1 by -1 where MaxCarRig_plans[i][1] == sp do deleteItem MaxCarRig_plans i
 			if MaxCarRig_lens == undefined do MaxCarRig_lens = #()
 			len = curveLength sp 1
@@ -2121,7 +2201,7 @@ ca.metre = units.decodeValue "1m"
 		fn rebuildRig root path grounds = (
 			local ca, saved, keep, cars, oldPath, bottom, wheels, mode, fwdIndex, usePivot, useLayer, newRoot, newCa, c, v
 			local edits = #(undefined, undefined, undefined, undefined), bottomLocal, loc, sc, k
-			global MaxCarRig_grids, MaxCarRig_splines3
+			global MaxCarRig_grids, MaxCarRig_splines4
 			cars = for n in nodesFrom (rawProp root "MaxCarRig_inCars") where isValidNode n collect n
 			oldPath = (nodesFrom (rawProp root "MaxCarRig_inPath"))[1]
 			bottom = (nodesFrom (rawProp root "MaxCarRig_inBottom"))[1]
@@ -2163,7 +2243,7 @@ ca.metre = units.decodeValue "1m"
 						bottom.transform = bottomLocal * (startFrame bottom fwdIndex)
 						-- Fresh spline and ground lookups.
 						MaxCarRig_grids = undefined
-						MaxCarRig_splines3 = undefined
+						MaxCarRig_splines4 = undefined
 						tyreEdits = edits
 						newRoot = buildRig cars path grounds bottom fwdIndex mode spRay.value wheels usePivot spAhead.value spSteer.value spBank.value
 						tyreEdits = undefined
