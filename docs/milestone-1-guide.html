@@ -89,6 +89,15 @@
     <li>Make a Plane with a Noise modifier, a Line spline over it, and a Box car. Select the box, press Use selection as car, pick the spline, add the plane as ground, press Create at car bottom, then Build rig.</li>
     <li>Scrub the timeline: the box runs along the spline and tilts to sit on the bumps.</li>
   </ol>
+  <h3>0.12.1: Progress keys stay put</h3>
+  <ol>
+    <li>Select the rig, open the Modify panel, press Set run from speed (Keep speed is now ticked).</li>
+    <li>Graph Editors &gt; Track View - Curve Editor, find the rig's Car Rig modifier &gt; Progress, add a key in the middle and drag it.</li>
+    <li>The status bar says Keep speed is now off, and its tick in the Speed group is gone.</li>
+    <li>Click the spline, then another object, then the rig again. The keys stay where you put them.</li>
+    <li>Move one spline vertex. The keys do not change.</li>
+    <li>Press Set run from speed again, then move a spline vertex so the spline gets longer. The two Progress keys stretch so the speed stays the same, and no warning shows.</li>
+  </ol>
 </div>
 
 <h2>4. Review checklist (about 30 minutes)</h2>

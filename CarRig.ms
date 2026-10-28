@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.12.0" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.12.1" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
@@ -772,6 +772,8 @@ buttonText:"SCR"
 							if c != undefined do for k in c.keys do (k.inTangentType = #linear; k.outTangentType = #linear)
 							if t0 + frames as time > animationRange.end do animationRange = interval (amin animationRange.start t0) (t0 + frames as time)
 							this.speedLocked = true
+							global MaxCarRig_rigCAs
+							if MaxCarRig_rigCAs != undefined do for e in MaxCarRig_rigCAs where e[1] == this do e[2] = undefined
 						)
 						showSpeed()
 					)
@@ -820,7 +822,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.12.0"
+		local toolVersion = "0.12.1"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -1261,40 +1263,68 @@ ca.metre = units.decodeValue "1m"
 			if m == undefined then undefined else custAttributes.get m 1
 		)
 
-		-- Re-times the Progress keys so the car cruises at the set speed along the rig's spline, starting on
-		-- frame 0. Used by Keep speed when the spline changes (the modifier's own button does the same).
-		fn setRunFromSpeed ca = (
-			local sp, len, mps, frames, c, t0 = 0f
-			sp = maxOps.getNodeByHandle ca.pathHandle
-			if isValidNode sp do (
-				len = (curveLength sp 1) / (amax 0.0001 ca.metre)
-				mps = if ca.speedUnit == 2 then ca.speedSet / 2.23694 else ca.speedSet / 3.6
-				frames = len / (amax 0.01 mps) * frameRate + (if ca.easeOn then (ca.easeStart + ca.easeStop) / 2.0 else 0.0)
-				c = getPropertyController ca "progress"
-				if c != undefined do deleteKeys c #allKeys
-				with animate on (
-					at time t0 ca.progress = 0.0
-					at time (t0 + frames as time) ca.progress = 100.0
+		-- Keep speed: when a spline's length changes, the rig's Progress keys are stretched by the same amount, so
+		-- the speed stays the same and any keys edited in the Curve Editor keep their shape. Max also fires change
+		-- events when nothing really changed (selecting things, opening panels), so the length is compared first.
+		-- Editing the Progress keys by hand (Curve Editor, Auto Key) turns Keep speed off, so a later spline edit
+		-- cannot change them, and says so on the status bar. Each redraw compares every Keep speed rig's keys with
+		-- a snapshot; the rig's own re-timing updates the snapshot so it is not taken for a hand edit.
+		fn progressSig ca = (
+			local c = getPropertyController ca "progress"
+			if c == undefined then "" else (for k in c.keys collect #(k.time, k.value)) as string
+		)
+		fn checkSpeedKeys = (
+			local s
+			global MaxCarRig_rigCAs
+			if MaxCarRig_rigCAs != undefined do for e in MaxCarRig_rigCAs do try (
+				if not e[1].speedLocked then e[2] = undefined
+				else (
+					s = progressSig e[1]
+					if e[2] == undefined then e[2] = s
+					else if s != e[2] do (
+						e[2] = undefined
+						undo off e[1].speedLocked = false
+						displayTempPrompt "Car Rig: Progress keys edited by hand, so Keep speed is now off. Press Set run from speed to turn it back on." 10000
+					)
 				)
-				c = getPropertyController ca "progress"
-				if c != undefined do for k in c.keys do (k.inTangentType = #linear; k.outTangentType = #linear)
-				if t0 + frames as time > animationRange.end do animationRange = interval (amin animationRange.start t0) (t0 + frames as time)
+			) catch ()
+		)
+		fn stretchProgress ca ratio = (
+			local c, n, t0, i, k
+			c = getPropertyController ca "progress"
+			n = if c == undefined then 0 else c.keys.count
+			if n >= 2 do (
+				t0 = c.keys[1].time
+				-- move keys from the far end when stretching and from the near end when shrinking, so none pass another
+				for i in (if ratio > 1.0 then (for j = n to 2 by -1 collect j) else (for j = 2 to n collect j)) do (
+					k = c.keys[i]
+					k.time = t0 + (k.time - t0) * ratio
+				)
+				if c.keys[n].time > animationRange.end do animationRange = interval animationRange.start c.keys[n].time
 			)
 		)
 
 		-- Edits to a rig's spline or ground are picked up at once: the stored spline table, speed plan and
 		-- ground grid for that object are dropped (rebuilt on the next frame), and rigs with Keep speed on get
-		-- their Progress keys re-timed for the new spline length. Watchers are set up for every rig in the scene
+		-- their Progress keys stretched to the new spline length. Watchers are set up for every rig in the scene
 		-- when the tool opens and when a rig is built or refreshed.
 		fn onSplineChanged sp = (
-			local i, ca
-			global MaxCarRig_splines3, MaxCarRig_plans
+			local i, ca, len, oldLen
+			global MaxCarRig_splines3, MaxCarRig_plans, MaxCarRig_lens, MaxCarRig_rigCAs
 			if MaxCarRig_splines3 != undefined do for i = MaxCarRig_splines3.count to 1 by -1 where MaxCarRig_splines3[i][1] == sp do deleteItem MaxCarRig_splines3 i
 			if MaxCarRig_plans != undefined do for i = MaxCarRig_plans.count to 1 by -1 where MaxCarRig_plans[i][1] == sp do deleteItem MaxCarRig_plans i
-			for r in objects where getUserProp r "MaxCarRig" == true do (
-				ca = rigParams r
-				if ca != undefined and ca.pathHandle == sp.handle and (try (ca.speedLocked) catch (false)) do setRunFromSpeed ca
-			)
+			if MaxCarRig_lens == undefined do MaxCarRig_lens = #()
+			len = curveLength sp 1
+			for e in MaxCarRig_lens where e[1] == sp do (oldLen = e[2]; e[2] = len)
+			if oldLen == undefined then append MaxCarRig_lens #(sp, len)
+			else if oldLen > 0.0 and abs (len - oldLen) > oldLen * 1e-6 do
+				for r in objects where getUserProp r "MaxCarRig" == true do (
+					ca = rigParams r
+					if ca != undefined and ca.pathHandle == sp.handle and (try (ca.speedLocked) catch (false)) do (
+						stretchProgress ca (len / oldLen)
+						if MaxCarRig_rigCAs != undefined do for e in MaxCarRig_rigCAs where e[1] == ca do e[2] = progressSig ca
+					)
+				)
 		)
 		fn onGroundChanged g = (
 			local i
@@ -1302,8 +1332,8 @@ ca.metre = units.decodeValue "1m"
 			if MaxCarRig_grids != undefined do for i = MaxCarRig_grids.count to 1 by -1 where MaxCarRig_grids[i][1] == g do deleteItem MaxCarRig_grids i
 		)
 		fn watchRigs = (
-			local splines = #(), grounds = #(), h
-			global MaxCarRig_onSpline, MaxCarRig_onGround
+			local splines = #(), grounds = #(), h, ca
+			global MaxCarRig_onSpline, MaxCarRig_onGround, MaxCarRig_lens, MaxCarRig_rigCAs, MaxCarRig_onRedraw
 			MaxCarRig_onSpline = onSplineChanged
 			MaxCarRig_onGround = onGroundChanged
 			deleteAllChangeHandlers id:#MaxCarRigWatch
@@ -1313,6 +1343,11 @@ ca.metre = units.decodeValue "1m"
 				h = rawProp r "MaxCarRig_inGrounds"
 				if h != undefined do for n in nodesFrom h where isValidNode n and findItem grounds n == 0 do append grounds n
 			)
+			MaxCarRig_lens = for sp in splines collect #(sp, curveLength sp 1)
+			MaxCarRig_rigCAs = for r in objects where getUserProp r "MaxCarRig" == true and (ca = rigParams r) != undefined collect #(ca, undefined)
+			if MaxCarRig_onRedraw != undefined do unRegisterRedrawViewsCallback MaxCarRig_onRedraw
+			MaxCarRig_onRedraw = checkSpeedKeys
+			registerRedrawViewsCallback MaxCarRig_onRedraw
 			if splines.count > 0 do (
 				when geometry splines changes id:#MaxCarRigWatch handleAt:#redrawViews sp do MaxCarRig_onSpline sp
 				when transform splines changes id:#MaxCarRigWatch handleAt:#redrawViews sp do MaxCarRig_onSpline sp
