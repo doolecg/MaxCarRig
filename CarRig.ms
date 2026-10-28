@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.17.0" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.18.0" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local wheelTags = #( \
@@ -392,7 +392,7 @@ buttonText:"SCR"
 			for i = 1 to offs.count do
 			(
 				w = offs[i] * guess
-				h = tyreDown grounds w fwd tyres[i][1] tyres[i][2] rayUp
+				h = tyreDown grounds w fwd tyres[i].radius 0.0 rayUp
 				append hits (if h == undefined then w else h.pos)
 				append missed (h == undefined)
 			)
@@ -588,7 +588,7 @@ buttonText:"SCR"
 	%RAYFNS%
 	tm = rig.transform
 	c = contact * tm
-	h = tyreDown grounds c tm.row1 %RADIUS% %HALFW% rayUp
+	h = tyreDown grounds c tm.row1 tyreShape.radius (tyreShape.height / 2.0) rayUp
 	dz = 0.0
 	if h != undefined do dz = dot (h.pos - c) (normalize tm.row3)
 	dz = suspension * (amax (-travel) (amin travel dz))
@@ -949,7 +949,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.17.0"
+		local toolVersion = "0.18.0"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -1111,11 +1111,11 @@ buttonText:"SCR"
 		-- Every local is declared at the top: Max 2026 throws "Bad free thunk" for locals
 		-- declared inside if/else blocks and then read in a for-loop.
 		fn buildRig cars path grounds bottom fwdIndex mode rayUp wheels usePivot lookAhead steerMax bank = (
-			local picked, base, tm, inv, bb, carLen, carWid, carSize, wheelSize, root, m, ca, offs, lenText, suspH, psc, cw, rest, bankRest, b
+			local picked, base, tm, inv, bb, carLen, carWid, carSize, wheelSize, root, m, ca, offs, lenText, suspH, psc, cw, rest, bankRest, b, tyreCyls = #()
 			-- The spline length is measured once here and written into the scripts: measuring it every frame
 			-- in every script was a large share of the playback cost. Rebuild the rig after editing the spline.
 			lenText = (amax 0.001 (curveLength path 1)) as string
-			local aim, ac, fl, fr, steering, front, axleZ, bankTm, bankH, bc, sc, st, sh, wheelParts, bodyNodes, c, s, ctrl, spinH, spc, wheelHolder, wt, axisK, axisSign, baseRot
+			local aim, ac, fl, fr, steering, front, axleZ, bankTm, bankH, bc, sc, st, sh, wheelParts, bodyNodes, c, s, ctrl, spinH, spc, wheelHolder, wt, axisK, axisSign, baseRot, cyl, axle, tw
 			local steerHs = #(undefined, undefined), corners = #("FL", "FR", "RL", "RR"), axisNames = #("rotateXMatrix", "rotateYMatrix", "rotateZMatrix")
 
 			picked = for w in wheels where w != undefined collect w
@@ -1233,19 +1233,32 @@ ca.metre = units.decodeValue "1m"
 					suspH = rigHelper (base + "_CarRig_Susp" + corners[i]) cw (wheelSize * 0.9) (color 170 160 150) false
 					suspH.parent = wheelHolder
 					rest = suspH.position.controller.value
+					-- The tyre's collision shape: a see-through, non-rendering cylinder the size of the tyre that
+					-- steers and rises with the wheel (it does not spin). The ground scripts read its Radius and
+					-- Height, so editing those changes how the tyre meets kerbs and bumps.
+					axle = normalize tm.row2
+					tw = 2.0 * (amax 0.001 (tyreHalfWidth wheels[i] tm.row2))
+					c = wheelCentre wheels[i] usePivot
+					cyl = Cylinder name:(uniqueName (base + "_CarRig_Tyre" + corners[i])) radius:(wheelRadius wheels[i]) height:tw sides:24 heightsegs:1 capsegs:1
+					cyl.transform = matrix3 (normalize tm.row1) (cross axle (normalize tm.row1)) axle (c - axle * (tw / 2.0))
+					cyl.renderable = false
+					cyl.xray = true
+					cyl.wirecolor = color 120 200 255
+					setUserProp cyl "MaxCarRig_helper" true
+					cyl.parent = suspH
+					tyreCyls[i] = cyl
 					psc = position_script()
 					psc.AddNode "rig" root
 					for g = 1 to grounds.count do psc.AddNode ("g" + g as string) grounds[g]
 					psc.AddTarget "rayUp" (getPropertyController ca "rayUp")
 					psc.AddTarget "suspension" (getPropertyController ca "suspension")
 					psc.AddTarget "travel" (getPropertyController ca "travel")
+					psc.AddObject "tyreShape" cyl.baseObject
 					s = substituteString suspScript "%RAYFNS%" rayFns
 					s = substituteString s "%GROUNDS%" (listText (for g = 1 to grounds.count collect ("g" + g as string)))
 					s = substituteString s "%REST%" (rest as string)
 					c = wheelCentre wheels[i] usePivot
 					s = substituteString s "%CONTACT%" (([c.x, c.y, c.z - wheelRadius wheels[i]] * inv) as string)
-					s = substituteString s "%RADIUS%" ((wheelRadius wheels[i]) as string)
-					s = substituteString s "%HALFW%" ((tyreHalfWidth wheels[i] tm.row2) as string)
 					psc.script = s
 					suspH.position.controller = psc
 					spinH.parent = suspH
@@ -1281,13 +1294,14 @@ ca.metre = units.decodeValue "1m"
 			s = substituteString (substituteString rootScript "%RAYFNS%" rayFns) "%MODE%" (mode as string)
 			s = substituteString s "%GROUNDS%" (listText (for i = 1 to grounds.count collect ("g" + i as string)))
 			s = substituteString s "%OFFSETS%" (listText offs)
-			s = substituteString s "%TYRES%" (if mode == 3 then listText (for w in wheels collect (#(wheelRadius w, 0.0) as string)) else "")
+			s = substituteString s "%TYRES%" (if mode == 3 then "tyre1, tyre2, tyre3, tyre4" else "")
 			ctrl = transform_script()
 			root.transform.controller = ctrl
 			ctrl.AddNode "sp" path
 			ctrl.AddTarget "progress" (getPropertyController ca "progress")
 			ctrl.AddTarget "rayUp" (getPropertyController ca "rayUp")
 			ctrl.AddObject "rigCA" ca
+			if mode == 3 do for i = 1 to 4 do ctrl.AddObject ("tyre" + i as string) tyreCyls[i].baseObject
 			for i = 1 to grounds.count do ctrl.AddNode ("g" + i as string) grounds[i]
 			ctrl.script = s
 			root
