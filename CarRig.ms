@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.24.1" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.24.2" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		-- Tyre collision shapes as the user left them (place, Radius, Height per wheel), handed from a rebuild
@@ -173,7 +173,7 @@ buttonText:"SCR"
 	fn planTable sp ca =
 	(
 		local tab, c, key, e, plan, i, n, pts, lens, tans, kap, cap, a, b, d, len, t0, t1, f, s, v, vCruise
-		local qPrev, q, aAcc, aStop, aLat, aBrake, vC, lo, hi, mid, capS, pos, guard, bumps, vb, sb, j
+		local qPrev, q, aAcc, aStop, aLat, aBrake, vC, lo, hi, mid, capS, pos, guard, bumps, vb, sb, j, capW, w
 		tab = splineTable sp
 		c = try (getPropertyController ca #progress) catch (undefined)
 		key = (if c == undefined then #() else (for k in c.keys collect #(k.time, k.value))) as string
@@ -212,6 +212,16 @@ buttonText:"SCR"
 				sb = bumps[1][j] * len
 				for i = 1 to n where (abs (lens[i] - sb)) <= 3.0 * ca.metre do cap[i] = amin cap[i] vb
 			)
+			-- A driver does not speed up for a moment in the middle of a bend: each point takes the lowest limit
+			-- within 5 m either side. The bend measured from the samples dips where two spline sections meet,
+			-- and the car used to speed up there and brake back.
+			capW = for i = 1 to n collect
+			(
+				w = cap[i]
+				for j = 1 to n where (abs (lens[j] - lens[i])) <= 5.0 * ca.metre do w = amin w cap[j]
+				w
+			)
+			cap = capW
 			-- brake before bends: a bend's limit reaches back along the road at Braking g
 			for i = n - 1 to 1 by -1 do cap[i] = amin cap[i] (sqrt (cap[i + 1] * cap[i + 1] + 2.0 * aBrake * (lens[i + 1] - lens[i])))
 			-- run timing from the Progress keys
@@ -545,9 +555,9 @@ buttonText:"SCR"
 		-- axle line at the bend's radius there. Each front wheel points at right angles to the line from that
 		-- point, so it rolls without sliding, and the inner wheel turns a little more (Ackermann). side is this
 		-- wheel's offset to the left of the centre line; how sharp the bend is comes from the road's turn
-		-- over half a metre either side of the rear axle.
+		-- over 1.5 m either side of the rear axle (shorter read the dips where spline sections meet).
 		ur = wrapU sp (u - s * rearD / len)
-		k = 0.5 * rigCA.metre / len
+		k = 1.5 * rigCA.metre / len
 		kap = ((turnAt sp (wrapU sp (ur + s * k))) - (turnAt sp (wrapU sp (ur - s * k)))) / (2.0 * k * len)
 		ang = 0.0
 		if (abs kap) > 0.0000001 do
@@ -1159,7 +1169,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.24.1"
+		local toolVersion = "0.24.2"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
