@@ -138,9 +138,9 @@
 
 		-- Ground (every name starts with CAR SURFACE, so Auto detect finds them all)
 		gridMesh "CAR SURFACE Road" (-70.0) 70.0 700 (-3.65) 3.65 4 zRoad (color 55 55 58) k
-		gridMesh "CAR SURFACE Kerb North" (-70.0) 70.0 700 3.65 3.8 10 zKerbN (color 160 160 158) k
+		gridMesh "CAR SURFACE Kerb North" (-70.0) 70.0 700 3.65 3.8 15 zKerbN (color 160 160 158) k
 		gridMesh "CAR SURFACE Pavement North" (-70.0) 70.0 700 3.8 5.65 4 zPavN (color 175 175 172) k
-		gridMesh "CAR SURFACE Kerb South" (-70.0) 70.0 700 (-3.8) (-3.65) 10 zKerbS (color 160 160 158) k
+		gridMesh "CAR SURFACE Kerb South" (-70.0) 70.0 700 (-3.8) (-3.65) 15 zKerbS (color 160 160 158) k
 		gridMesh "CAR SURFACE Pavement South" (-70.0) 70.0 700 (-5.65) (-3.8) 4 zFlat125 (color 175 175 172) k
 		gridMesh "CAR SURFACE Forecourt" (-22.0) 22.0 44 5.65 19.6 14 zFlat125 (color 185 180 170) k
 		gridMesh "CAR SURFACE Dropoff Kerb" (-15.0) 15.0 30 19.6 24.0 4 zFlat250 (color 195 190 180) k
