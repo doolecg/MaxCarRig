@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.16.0" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.17.0" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local wheelTags = #( \
@@ -131,11 +131,13 @@ buttonText:"SCR"
 	fn planTable sp ca =
 	(
 		local tab, c, key, e, plan, i, n, pts, lens, tans, kap, cap, a, b, d, len, t0, t1, f, s, v, vCruise
-		local qPrev, q, aAcc, aStop, aLat, aBrake, vC, lo, hi, mid, capS, pos, guard
+		local qPrev, q, aAcc, aStop, aLat, aBrake, vC, lo, hi, mid, capS, pos, guard, bumps, vb, sb, j
 		tab = splineTable sp
 		c = try (getPropertyController ca #progress) catch (undefined)
 		key = (if c == undefined then #() else (for k in c.keys collect #(k.time, k.value))) as string
-		key += (#(tab[3], tab[1].count, ca.easeOn, ca.easeStart, ca.easeStop, ca.cornerSpeed, ca.speedUnit, ca.cornerRadius, ca.brakeG, ca.reverse, frameRate, ca.metre)) as string
+		key += (#(tab[3], tab[1].count, ca.easeOn, ca.easeStart, ca.easeStop, ca.cornerSpeed, ca.speedUnit, ca.cornerRadius, ca.brakeG, ca.reverse, frameRate, ca.metre, ca.cornerSlow)) as string
+		bumps = try (if ca.kerbSlow then #(ca.bumpU as array, ca.bumpH as array) else #(#(), #())) catch (#(#(), #()))
+		key += bumps as string
 		if MaxCarRig_plans == undefined do MaxCarRig_plans = #()
 		for e in MaxCarRig_plans where e[1] == sp and e[2] == key do plan = e[3]
 		if plan == undefined do
@@ -158,7 +160,16 @@ buttonText:"SCR"
 			vC = (if ca.speedUnit == 2 then ca.cornerSpeed / 2.23694 else ca.cornerSpeed / 3.6) * ca.metre / frameRate
 			aLat = vC * vC / (amax 0.001 ca.cornerRadius)
 			aBrake = ca.brakeG * 9.81 * ca.metre / (frameRate * frameRate)
-			cap = for i = 1 to n collect (if kap[i] < 0.0000001 then 1e12 else sqrt (aLat / kap[i]))
+			cap = for i = 1 to n collect (if not ca.cornerSlow or kap[i] < 0.0000001 then 1e12 else sqrt (aLat / kap[i]))
+			-- Kerbs and bumps: the car crosses each one slowly, the taller the slower (about 8 km/h for a
+			-- 125 mm kerb, 10 km/h for a road hump, 18 km/h for a dropped kerb), from 3 m before to 3 m after
+			-- so both axles are over it at that speed.
+			for j = 1 to bumps[1].count do
+			(
+				vb = 2.5 * (sqrt (0.1 / (amax 0.005 (bumps[2][j] / ca.metre)))) * ca.metre / frameRate
+				sb = bumps[1][j] * len
+				for i = 1 to n where (abs (lens[i] - sb)) <= 3.0 * ca.metre do cap[i] = amin cap[i] vb
+			)
 			-- brake before bends: a bend's limit reaches back along the road at Braking g
 			for i = n - 1 to 1 by -1 do cap[i] = amin cap[i] (sqrt (cap[i + 1] * cap[i + 1] + 2.0 * aBrake * (lens[i + 1] - lens[i])))
 			-- run timing from the Progress keys
@@ -174,6 +185,8 @@ buttonText:"SCR"
 			)
 			vCruise = amax 0.001 vCruise
 			aAcc = if ca.easeOn and ca.easeStart > 0.0 then vCruise / ca.easeStart else 1e12
+			-- Pull away from a kerb or bend gently (0.3 g at most), not in one frame.
+			aAcc = amin aAcc (0.3 * 9.81 * ca.metre / (frameRate * frameRate))
 			aStop = if ca.easeOn and ca.easeStop > 0.0 then vCruise / ca.easeStop else 1e12
 			plan = #(t0, #(0.0))
 			s = 0.0
@@ -206,7 +219,7 @@ buttonText:"SCR"
 	fn travelAt sp f ca =
 	(
 		local q, total, plan, k, i, a
-		if ca.cornerSlow then
+		if ca.cornerSlow or (try (ca.kerbSlow and ca.bumpU.count > 0) catch (false)) then
 		(
 			plan = planTable sp ca
 			k = f - plan[1]
@@ -294,6 +307,40 @@ buttonText:"SCR"
 			)
 		)
 		best
+	)
+	-- A tyre is round and has width, so it meets a kerb or bump before its centre is over it and rolls up the
+	-- edge instead of sinking into it. Ground is sampled along both tyre edges at points fixed in the world (a
+	-- grid along the direction of travel, half a radius apart), so the lift grows smoothly as the tyre moves
+	-- instead of jumping when one ray crosses an edge. Returns the contact as a ray (point lifted to where
+	-- the tyre rests, ground normal under the centre), or undefined if there is no ground.
+	fn tyreDown grounds p fwd r hw rayUp =
+	(
+		local mid, fh, side, st, u, k0, k1, k, x, q, h, z, best = undefined, lines, ln
+		mid = castDown grounds p rayUp
+		if r <= 0.0 or (length [fwd.x, fwd.y, 0.0]) < 0.0001 then mid
+		else
+		(
+			fh = normalize [fwd.x, fwd.y, 0.0]
+			side = [-fh.y, fh.x, 0.0]
+			st = r / 2.0
+			u = dot p fh
+			k0 = (ceil ((u - r) / st)) as integer
+			k1 = (floor ((u + r) / st)) as integer
+			lines = if hw > 0.0 then #(-hw, hw) else #(0.0)
+			for ln in lines do
+				for k = k0 to k1 do
+				(
+					x = k * st - u
+					q = p + fh * x + side * ln
+					h = castDown grounds q rayUp
+					if h != undefined do
+					(
+						z = h.pos.z - (r - sqrt (amax 0.0 (r * r - x * x)))
+						if best == undefined or z > best do best = z
+					)
+				)
+			if best == undefined then mid else ray [p.x, p.y, best] (if mid != undefined then mid.dir else [0, 0, 1])
+		)
 	)"
 
 		-- Rig root (Transform Script). Mode 1 = simple, 2 = body, 3 = per wheel.
@@ -302,6 +349,7 @@ buttonText:"SCR"
 	local mode = %MODE%
 	local grounds = #(%GROUNDS%)
 	local offs = #(%OFFSETS%)
+	local tyres = #(%TYRES%)
 	-- All locals up front: Max throws a Bad free thunk error for locals declared in a nested block and read in a loop.
 	local u, p, fwd, y, h, up, guess, hits, w, x, tm, mid, offMid, sa, missed, nh, zs, i
 	%RAYFNS%
@@ -327,7 +375,7 @@ buttonText:"SCR"
 		)
 		2:
 		(
-			h = castDown grounds p rayUp
+			h = tyreDown grounds p fwd rigCA.wheelR 0.0 rayUp
 			if h == undefined then frameFrom fwd [0,0,1] p
 			else
 			(
@@ -341,10 +389,10 @@ buttonText:"SCR"
 			guess = frameFrom (normalize [fwd.x, fwd.y, 0]) [0,0,1] p
 			hits = #()
 			missed = #()
-			for o in offs do
+			for i = 1 to offs.count do
 			(
-				w = o * guess
-				h = castDown grounds w rayUp
+				w = offs[i] * guess
+				h = tyreDown grounds w fwd tyres[i][1] tyres[i][2] rayUp
 				append hits (if h == undefined then w else h.pos)
 				append missed (h == undefined)
 			)
@@ -413,7 +461,7 @@ buttonText:"SCR"
 	local dh = 0.0, dp = 0.0, dr = 0.0, n, i, k, j, w, wsum, tk, uk, pk, hh, pp, rr, h0, p0, r0, out
 	local len, dirS, toG, sigB, sigP, sigS, nB, nP, nS, nMax, prog = #(), idx, d0, d1, d2, v, q, ua, ub, ta, tb, kap, lon, lat
 	local sumB = 0.0, sumP = 0.0, sumS = 0.0, wbs = 0.0, wps = 0.0, wss = 0.0, ax = 0.0, ay = 0.0, delta, mats = #(), realistic, roll, pitch
-	local hs = #(), ps = #(), rs = #(), wn, wd, zeta, e, st, fade, half, c
+	local hs = #(), ps = #(), rs = #(), wn, wd, zeta, e, st, fade, half, c, ts, tf
 	fn wrapU sp x = if isClosed sp 1 then (mod ((mod x 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 x))
 	len = (splineTable sp)[3]
 	dirS = if rigCA.reverse then -1.0 else 1.0
@@ -482,28 +530,37 @@ buttonText:"SCR"
 		wd = wn * sqrt (1.0 - zeta * zeta)
 		n = (amin 20 (ceil (rigCA.bodyLag * 8.0))) as integer
 		half = n / 2.0
-		for i = 0 to n + 1 do
+		-- Every other earlier frame is enough for a smooth spring and halves the cost (each needs the rig's
+		-- ground fit again). They are the even frames, fixed in time, so a kerb is not seen on alternate frames
+		-- (sampling at fixed steps back from F made the body move in two-frame stairs).
+		ts = #(F)
+		for tf = 2.0 * ((ceil (F / 2.0)) - 1.0) to F - n - 2 by -2 do append ts tf
+		for i = 1 to ts.count do
 		(
-			tk = (F - i) as time
+			tk = ts[i] as time
 			j = at time tk rig.transform
-			uk = travelAt sp (F - i) rigCA
+			uk = travelAt sp ts[i] rigCA
 			if rigCA.reverse do uk = 1.0 - uk
 			pk = (splineAt sp (wrapU sp uk))[1]
 			append hs (j.row4.z - pk.z)
 			append ps (asin (amax (-1.0) (amin 1.0 (normalize j.row1).z)))
 			append rs (asin (amax (-1.0) (amin 1.0 (normalize j.row2).z)))
 		)
-		for i = 0 to n do
+		for k = 1 to hs.count - 1 do
 		(
+			-- the change between two samples happened around the middle of the pair, i frames ago
+			i = F - (ts[k] + ts[k + 1]) / 2.0
 			e = exp (-zeta * wn * i)
 			st = 1.0 - e * ((cos (wd * i * 180.0 / pi)) + zeta / (sqrt (1.0 - zeta * zeta)) * (sin (wd * i * 180.0 / pi)))
-			fade = if i <= half then 1.0 else 0.5 + 0.5 * (cos (180.0 * (i - half) / (n + 1 - half)))
+			fade = if i <= half then 1.0 else 0.5 + 0.5 * (cos (180.0 * (amin 1.0 ((i - half) / (n + 2 - half)))))
 			c = (st - 1.0) * fade
-			dh += c * (hs[i + 1] - hs[i + 2])
-			dp += c * (ps[i + 1] - ps[i + 2])
-			dr += c * (rs[i + 1] - rs[i + 2])
+			dh += c * (hs[k] - hs[k + 1])
+			dp += c * (ps[k] - ps[k + 1])
+			dr += c * (rs[k] - rs[k + 1])
 		)
 		dh *= rigCA.bodyFollow
+		-- The springs bottom out: the body can lag below the wheels only as far as the suspension travel.
+		dh = amax dh (-rigCA.travel)
 		dp *= rigCA.bodyFollow
 		dr *= rigCA.bodyFollow
 	)
@@ -520,9 +577,9 @@ buttonText:"SCR"
 	out
 )"
 
-		-- Suspension (Position Script, one per wheel): a ray under the wheel's contact point; the wheel moves
-		-- along the rig's up axis by how far the ground there is above or below the body's plane, up to Travel,
-		-- scaled by Suspension (0 = off, 1 = full).
+		-- Suspension (Position Script, one per wheel): the tyre's contact (round and wide, see tyreDown); the
+		-- wheel moves along the rig's up axis by how far the ground there is above or below the body's plane,
+		-- up to Travel, scaled by Suspension (0 = off, 1 = full).
 		local suspScript = @"(
 	local grounds = #(%GROUNDS%)
 	local rest = %REST%
@@ -531,7 +588,7 @@ buttonText:"SCR"
 	%RAYFNS%
 	tm = rig.transform
 	c = contact * tm
-	h = castDown grounds c rayUp
+	h = tyreDown grounds c tm.row1 %RADIUS% %HALFW% rayUp
 	dz = 0.0
 	if h != undefined do dz = dot (h.pos - c) (normalize tm.row3)
 	dz = suspension * (amax (-travel) (amin travel dz))
@@ -607,6 +664,9 @@ buttonText:"SCR"
 				cornerSpeed type:#float ui:spCornerSpeed default:10.0
 				cornerRadius type:#worldUnits ui:spCornerRad default:20000.0
 				brakeG type:#float ui:spBrakeG default:0.5
+				kerbSlow type:#boolean ui:cbKerb default:true
+				bumpU type:#floatTab tabSizeVariable:true
+				bumpH type:#floatTab tabSizeVariable:true
 			)
 
 			-- Presets stay showing what was picked. Changing a value afterwards keeps the preset name shown.
@@ -885,10 +945,11 @@ buttonText:"SCR"
 				label lblCornerUnit "(unit as in Drive panel)" align:#right
 				spinner spCornerRad "Tight radius" type:#worldunits range:[0, 1e9, 20000] fieldwidth:64
 				spinner spBrakeG "Braking g" range:[0.05, 2, 0.5] fieldwidth:64
+				checkbox cbKerb "Slow for kerbs and bumps"
 			)
 		)
 
-		local toolVersion = "0.16.0"
+		local toolVersion = "0.17.0"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -972,6 +1033,45 @@ buttonText:"SCR"
 		)
 		fn wheelCentre w usePivot = if usePivot then w.pos else (local t = tyreOf w; (t.min + t.max) / 2)
 		fn wheelRadius w = (local t = tyreOf w; (t.max.z - t.min.z) / 2)
+		-- Half the tyre's width, measured across the car (side is the car's left).
+		fn tyreHalfWidth w side = (local t = tyreOf w; abs (dot (t.max - t.min) (normalize side)) / 2)
+
+		-- Kerbs and bumps along the path, found once at build: the ground height every 10 cm under the spline,
+		-- and a bump wherever a point stands out from the average of the ground 1 m before and after it by more
+		-- than 12 mm (a slope alone does not count). Returns #(positions along the spline 0..1, heights).
+		fn findBumps path grounds = (
+			local len, stp, n, i, j, p, r, top, hs = #(), us = #(), hts = #(), b, inRun = false, peak, peakI, lo, hi, w
+			if grounds.count == 0 or not isValidNode path do return #(#(), #())
+			len = curveLength path 1
+			stp = units.decodeValue "0.1m"
+			n = (amax 2 (len / stp)) as integer
+			w = 10
+			for i = 0 to n do (
+				p = lengthInterp path 1 ((i as float) / n)
+				top = undefined
+				for g in grounds where isValidNode g do (
+					r = intersectRay g (ray (p + [0, 0, units.decodeValue "100m"]) [0, 0, -1])
+					if r != undefined and (top == undefined or r.pos.z > top) do top = r.pos.z
+				)
+				append hs top
+			)
+			for i = w + 1 to hs.count - w do (
+				b = if hs[i] == undefined or hs[i - w] == undefined or hs[i + w] == undefined then 0.0 \
+					else abs (hs[i] - (hs[i - w] + hs[i + w]) / 2.0)
+				if b > units.decodeValue "0.012m" then (
+					if not inRun or b > peak do (peak = b; peakI = i)
+					inRun = true
+				) else if inRun do (
+					lo = 1e12
+					hi = -1e12
+					for j = peakI - w to peakI + w where hs[j] != undefined do (lo = amin lo hs[j]; hi = amax hi hs[j])
+					append us (((peakI - 1) as float) / n)
+					append hts (hi - lo)
+					inRun = false
+				)
+			)
+			#(us, hts)
+		)
 
 		fn linkTo n parent = (
 			setUserProp n "MaxCarRig_oldParent" (if n.parent == undefined then 0 else n.parent.handle)
@@ -1011,7 +1111,7 @@ buttonText:"SCR"
 		-- Every local is declared at the top: Max 2026 throws "Bad free thunk" for locals
 		-- declared inside if/else blocks and then read in a for-loop.
 		fn buildRig cars path grounds bottom fwdIndex mode rayUp wheels usePivot lookAhead steerMax bank = (
-			local picked, base, tm, inv, bb, carLen, carWid, carSize, wheelSize, root, m, ca, offs, lenText, suspH, psc, cw, rest, bankRest
+			local picked, base, tm, inv, bb, carLen, carWid, carSize, wheelSize, root, m, ca, offs, lenText, suspH, psc, cw, rest, bankRest, b
 			-- The spline length is measured once here and written into the scripts: measuring it every frame
 			-- in every script was a large share of the playback cost. Rebuild the rig after editing the spline.
 			lenText = (amax 0.001 (curveLength path 1)) as string
@@ -1053,6 +1153,9 @@ buttonText:"SCR"
 ca.metre = units.decodeValue "1m"
 			ca.pathHandle = path.handle
 			ca.wheelR = if picked.count > 0 then wheelRadius picked[1] else carSize * 0.06
+			b = findBumps path grounds
+			ca.bumpU = b[1]
+			ca.bumpH = b[2]
 			-- Progress runs 0 to 100 over the active time range on linear keys, so the speed is constant.
 			with animate on (
 				at time animationRange.start ca.progress = 0.0
@@ -1141,6 +1244,8 @@ ca.metre = units.decodeValue "1m"
 					s = substituteString s "%REST%" (rest as string)
 					c = wheelCentre wheels[i] usePivot
 					s = substituteString s "%CONTACT%" (([c.x, c.y, c.z - wheelRadius wheels[i]] * inv) as string)
+					s = substituteString s "%RADIUS%" ((wheelRadius wheels[i]) as string)
+					s = substituteString s "%HALFW%" ((tyreHalfWidth wheels[i] tm.row2) as string)
 					psc.script = s
 					suspH.position.controller = psc
 					spinH.parent = suspH
@@ -1176,6 +1281,7 @@ ca.metre = units.decodeValue "1m"
 			s = substituteString (substituteString rootScript "%RAYFNS%" rayFns) "%MODE%" (mode as string)
 			s = substituteString s "%GROUNDS%" (listText (for i = 1 to grounds.count collect ("g" + i as string)))
 			s = substituteString s "%OFFSETS%" (listText offs)
+			s = substituteString s "%TYRES%" (if mode == 3 then listText (for w in wheels collect (#(wheelRadius w, 0.0) as string)) else "")
 			ctrl = transform_script()
 			root.transform.controller = ctrl
 			ctrl.AddNode "sp" path
@@ -1936,7 +2042,7 @@ ca.metre = units.decodeValue "1m"
 			else (
 				-- Keep every modifier setting: animated ones as a copy of their controller (keys included).
 				ca = rigParams root
-				keep = #(#progress, #lookAhead, #steerMax, #bank, #rayUp, #spin, #suspension, #travel, #diveSquat, #bankTime, #pitchTime, #startTime, #bodyFollow, #bodyLag, #reverse, #realistic, #maxBank, #maxPitch, #cornerSlow, #cornerSpeed, #cornerRadius, #brakeG, #easeOn, #easeStart, #easeStop, #speedSet, #speedUnit, #carType, #suspType, #lookType, #speedLocked)
+				keep = #(#progress, #lookAhead, #steerMax, #bank, #rayUp, #spin, #suspension, #travel, #diveSquat, #bankTime, #pitchTime, #startTime, #bodyFollow, #bodyLag, #reverse, #realistic, #maxBank, #maxPitch, #cornerSlow, #cornerSpeed, #cornerRadius, #brakeG, #easeOn, #easeStart, #easeStop, #speedSet, #speedUnit, #carType, #suspType, #lookType, #speedLocked, #kerbSlow)
 				saved = #()
 				for n in keep do (
 					c = try (getPropertyController ca (n as string)) catch (undefined)

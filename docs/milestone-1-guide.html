@@ -132,6 +132,14 @@
     <li>Set only the car (Use selection as car) and BOTTOM, then press Build rig. A straight 30 m yellow spline is made in front of the car and the car drives it, riding on the spline.</li>
     <li>On the rig's modifier, Pick new spline to swap it for your road path, and Pick ground to add the road. The car now sits on the road.</li>
   </ol>
+  <h3>0.17.0: tyres meet kerbs, slowing for kerbs</h3>
+  <ol>
+    <li>Press Refresh selected rig on any existing rig first (older rigs keep the old scripts until rebuilt).</li>
+    <li>In the test scene, build a Per wheel rig on KERB TEST PATH. Scrub frame by frame onto the kerb: each tyre starts to rise before its centre reaches the kerb edge and rolls up it; no tyre goes into the kerb.</li>
+    <li>Play it: the car slows to about walking pace (8 km/h) for the full kerb, about 10 km/h for the road hump and 18 km/h for the dropped kerbs, then pulls away gently.</li>
+    <li>Untick Slow for kerbs and bumps (corner slowdown panel): the car drives the Progress keys straight again.</li>
+    <li>Playback speed: note the fps over the kerb compared with 0.16.0.</li>
+  </ol>
 </div>
 
 <h2>4. Review checklist (about 30 minutes)</h2>
