@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.19.0" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.19.1" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local wheelTags = #( \
@@ -985,7 +985,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.19.0"
+		local toolVersion = "0.19.1"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -1274,9 +1274,12 @@ ca.metre = units.decodeValue "1m"
 					-- Height, so editing those changes how the tyre meets kerbs and bumps.
 					axle = normalize tm.row2
 					tw = 2.0 * (amax 0.001 (tyreHalfWidth wheels[i] tm.row2))
-					c = wheelCentre wheels[i] usePivot
+					-- Placed on the tyre mesh itself (not the wheel pivot), and centred by its own box so it sits on
+					-- the tyre whichever end of the gizmo its pivot is.
+					c = wheelCentre wheels[i] false
 					cyl = CylGizmo name:(uniqueName (base + "_CarRig_Tyre" + corners[i])) radius:(wheelRadius wheels[i]) height:tw
-					cyl.transform = matrix3 (normalize tm.row1) (cross axle (normalize tm.row1)) axle (c - axle * (tw / 2.0))
+					cyl.transform = matrix3 (normalize tm.row1) (cross axle (normalize tm.row1)) axle c
+					cyl.pos += c - (cyl.min + cyl.max) / 2.0
 					cyl.wirecolor = color 120 200 255
 					setUserProp cyl "MaxCarRig_helper" true
 					cyl.parent = suspH
@@ -1291,7 +1294,9 @@ ca.metre = units.decodeValue "1m"
 					s = substituteString suspScript "%RAYFNS%" rayFns
 					s = substituteString s "%GROUNDS%" (listText (for g = 1 to grounds.count collect ("g" + g as string)))
 					s = substituteString s "%REST%" (rest as string)
-					c = wheelCentre wheels[i] usePivot
+					-- The contact is the bottom of the tyre mesh (not the wheel pivot), so a pivot that is off
+					-- the tyre's centre cannot push the tyre into the ground.
+					c = wheelCentre wheels[i] false
 					s = substituteString s "%CONTACT%" (([c.x, c.y, c.z - wheelRadius wheels[i]] * inv) as string)
 					psc.script = s
 					suspH.position.controller = psc
@@ -1318,7 +1323,7 @@ ca.metre = units.decodeValue "1m"
 
 				if mode == 3 do (
 					for w in wheels do (
-						c = wheelCentre w usePivot
+						c = wheelCentre w false
 						append offs ([c.x, c.y, c.z - wheelRadius w] * inv)
 					)
 				)
