@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.18.0" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.18.1" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local wheelTags = #( \
@@ -297,7 +297,9 @@ buttonText:"SCR"
 			for g in grounds where isValidNode g and p.x >= g.min.x and p.x <= g.max.x and p.y >= g.min.y and p.y <= g.max.y do
 			(
 				rm = gridFor g
-				n = rm.intersectRay o [0,0,-1] false
+				-- Both sides of every face count: imported or built ground often has faces pointing down, and
+				-- one-sided rays went straight through it. The closest hit from above is still the top surface.
+				n = rm.intersectRay o [0,0,-1] true
 				if n > 0 do
 				(
 					i = rm.getClosestHit()
@@ -949,7 +951,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.18.0"
+		local toolVersion = "0.18.1"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -1591,6 +1593,8 @@ ca.metre = units.decodeValue "1m"
 
 		on MaxCarRig_UI open do (
 			local fontStyle = dotNetClass "System.Drawing.FontStyle"
+			-- Rays start 2 m above the spline whatever the scene units (200 units was only 20 cm in a mm scene).
+			spRay.value = units.decodeValue "2m"
 			watchRigs()
 			-- Re-reading the modifier definition brings rigs built with older versions up to date (new panels).
 			paramsCA()
