@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.18.1" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.19.0" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local wheelTags = #( \
@@ -317,7 +317,7 @@ buttonText:"SCR"
 	-- the tyre rests, ground normal under the centre), or undefined if there is no ground.
 	fn tyreDown grounds p fwd r hw rayUp =
 	(
-		local mid, fh, side, st, u, k0, k1, k, x, q, h, z, best = undefined, lines, ln
+		local mid, fh, side, st, u, k0, k1, k, x, q, h, z, best = undefined, lines, ln, xPrev, zPrev
 		mid = castDown grounds p rayUp
 		if r <= 0.0 or (length [fwd.x, fwd.y, 0.0]) < 0.0001 then mid
 		else
@@ -329,18 +329,32 @@ buttonText:"SCR"
 			k0 = (ceil ((u - r) / st)) as integer
 			k1 = (floor ((u + r) / st)) as integer
 			lines = if hw > 0.0 then #(-hw, hw) else #(0.0)
+			-- On flat ground the highest point under the round tyre steps from one sample to the next, which made
+			-- the wheel bob about 3% of its radius at every sample. The ground straight under the centre,
+			-- blended between the two samples either side, is also a candidate, so flat ground stays flat.
 			for ln in lines do
+			(
+				xPrev = undefined
 				for k = k0 to k1 do
 				(
 					x = k * st - u
 					q = p + fh * x + side * ln
 					h = castDown grounds q rayUp
-					if h != undefined do
+					if h == undefined then xPrev = undefined
+					else
 					(
 						z = h.pos.z - (r - sqrt (amax 0.0 (r * r - x * x)))
 						if best == undefined or z > best do best = z
+						if xPrev != undefined and xPrev <= 0.0 and x > 0.0 do
+						(
+							z = zPrev + (h.pos.z - zPrev) * (0.0 - xPrev) / (x - xPrev)
+							if z > best do best = z
+						)
+						xPrev = x
+						zPrev = h.pos.z
 					)
 				)
+			)
 			if best == undefined then mid else ray [p.x, p.y, best] (if mid != undefined then mid.dir else [0, 0, 1])
 		)
 	)"
@@ -660,6 +674,10 @@ buttonText:"SCR"
 				bodyFollow type:#float ui:spFollow default:1.0
 				bodyLag type:#float ui:spLag default:3.0
 			)
+			parameters pChange rollout:rChange
+			(
+				showHelpers type:#boolean ui:cbHelpers default:true
+			)
 			parameters pCorner rollout:rCorner
 			(
 				cornerSlow type:#boolean ui:cbCorner default:false
@@ -899,6 +917,7 @@ buttonText:"SCR"
 				button btnDel "Remove from list" width:140
 				button btnSurf "Add CAR SURFACE" width:140
 				pickbutton pbPath "Pick new spline" filter:isShape width:140
+				checkbox cbHelpers "Show helpers"
 				fn rigNode =
 				(
 					local m = custAttributes.getOwner this
@@ -919,6 +938,21 @@ buttonText:"SCR"
 					else MaxCarRig_changeLater (rigNode()) action arg
 				)
 				on rChange open do listGrounds()
+				-- Hides or shows every rig helper (steer, bank, suspension, spin, tyre shapes, aim); the green rig
+				-- rectangle stays so the rig can still be selected.
+				on cbHelpers changed state do
+				(
+					local r = rigNode(), all, h, i
+					if r != undefined do
+					(
+						all = #(r)
+						i = 1
+						while i <= all.count do (join all (for c in all[i].children collect c); i += 1)
+						h = getUserProp r "MaxCarRig_aim"
+						if h != undefined do append all (maxOps.getNodeByHandle h)
+						for n in all where isValidNode n and getUserProp n "MaxCarRig_helper" == true do n.isHidden = not state
+					)
+				)
 				on pbAdd picked o do ask #add #(o)
 				on btnDel pressed do if lbGround.selection > 0 do ask #remove lbGround.selection
 				on btnSurf pressed do ask #surface undefined
@@ -951,7 +985,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.18.1"
+		local toolVersion = "0.19.0"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -1235,16 +1269,14 @@ ca.metre = units.decodeValue "1m"
 					suspH = rigHelper (base + "_CarRig_Susp" + corners[i]) cw (wheelSize * 0.9) (color 170 160 150) false
 					suspH.parent = wheelHolder
 					rest = suspH.position.controller.value
-					-- The tyre's collision shape: a see-through, non-rendering cylinder the size of the tyre that
-					-- steers and rises with the wheel (it does not spin). The ground scripts read its Radius and
+					-- The tyre's collision shape: a cylinder gizmo (outline only, never renders) the size of the tyre
+					-- that steers and rises with the wheel (it does not spin). The ground scripts read its Radius and
 					-- Height, so editing those changes how the tyre meets kerbs and bumps.
 					axle = normalize tm.row2
 					tw = 2.0 * (amax 0.001 (tyreHalfWidth wheels[i] tm.row2))
 					c = wheelCentre wheels[i] usePivot
-					cyl = Cylinder name:(uniqueName (base + "_CarRig_Tyre" + corners[i])) radius:(wheelRadius wheels[i]) height:tw sides:24 heightsegs:1 capsegs:1
+					cyl = CylGizmo name:(uniqueName (base + "_CarRig_Tyre" + corners[i])) radius:(wheelRadius wheels[i]) height:tw
 					cyl.transform = matrix3 (normalize tm.row1) (cross axle (normalize tm.row1)) axle (c - axle * (tw / 2.0))
-					cyl.renderable = false
-					cyl.xray = true
 					cyl.wirecolor = color 120 200 255
 					setUserProp cyl "MaxCarRig_helper" true
 					cyl.parent = suspH
