@@ -7,6 +7,7 @@ What each system is, where it lives and how it connects to the others. Update wh
 - **Where:** `CarRig.ms`, rollout `MaxCarRig_UI`.
 - **Talks to:** the scene, by creating the rig nodes below.
 - **Saved:** nothing; settings are per session.
+- **Change a built rig:** a panel follows the last rig selected and rebuilds it (as Refresh does, keeping modifier settings and Progress keys) with added or removed ground objects, new CAR SURFACE objects, or a new spline. The inputs are read from and written back to the rig's `MaxCarRig_in*` user props.
 
 ## Rig nodes (in the scene)
 - **What it does:** `<car>_CarRig` is a rectangle round the car, holding a Car Rig modifier (Attribute Holder with custom attribute `MaxCarRigParams`: progress, lookAhead, steerMax, bank, rayUp). Its Transform Script places it on the spline at `progress` with `lengthInterp`/`lengthTangent` and casts rays at the ground objects to place and tilt the car.

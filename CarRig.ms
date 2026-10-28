@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.12.2" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.13.0" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local pathShape = undefined, bottomNode = undefined
@@ -839,7 +839,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.12.2"
+		local toolVersion = "0.13.0"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -1227,6 +1227,15 @@ ca.metre = units.decodeValue "1m"
 		button btnBuild "Build rig" width:165 height:28 across:3
 		button btnRefresh "Refresh selected rig" width:165 height:28
 		button btnRemove "Remove selected rig" width:165 height:28
+		group "Change a built rig (select its rig rectangle first)"
+		(
+			label lblEdit "No rig selected" align:#left
+			listbox lbEditGround height:3 width:514
+			button btnEditAdd "Add selected" width:122 across:4
+			button btnEditDel "Remove" width:122
+			button btnEditSurf "Add CAR SURFACE" width:122
+			pickbutton pbEditPath "Pick new spline" filter:shapeFilt width:122
+		)
 		group "Bake"
 		(
 			radiobuttons rbBakeRange labels:#("Timeline", "Custom range") columns:2 align:#left across:3
@@ -1379,10 +1388,33 @@ ca.metre = units.decodeValue "1m"
 				pbFL, pbFR, pbRL, pbRR, spAhead, spSteer, spBank) do c.enabled = full
 			lbGround.items = for g in groundList where isValidNode g collect g.name
 		)
+		fn showEditRig = (
+			global MaxCarRig_editRoot
+			local r = MaxCarRig_editRoot
+			if isValidNode r and getUserProp r "MaxCarRig" == true and rawProp r "MaxCarRig_inCars" != undefined then (
+				lblEdit.text = "Changing: " + r.name + (if getUserProp r "MaxCarRig_inMode" == 1 then "  (Simple mode does not use ground)" else "")
+				lbEditGround.items = for n in nodesFrom (rawProp r "MaxCarRig_inGrounds") where isValidNode n collect n.name
+			) else (
+				MaxCarRig_editRoot = undefined
+				lblEdit.text = "No rig selected"
+				lbEditGround.items = #()
+			)
+		)
+		fn onSelChanged = (
+			global MaxCarRig_editRoot
+			local r = (for o in selection where getUserProp o "MaxCarRig" == true collect o)[1]
+			if r != undefined do MaxCarRig_editRoot = r
+			showEditRig()
+		)
 
 		on MaxCarRig_UI open do (
 			local fontStyle = dotNetClass "System.Drawing.FontStyle"
 			watchRigs()
+			global MaxCarRig_onSel
+			MaxCarRig_onSel = onSelChanged
+			callbacks.removeScripts id:#MaxCarRigSel
+			callbacks.addScript #selectionSetChanged "MaxCarRig_onSel()" id:#MaxCarRigSel
+			onSelChanged()
 			for t in #(#root, #aim, #steer, #bank, #spin) do case t of (
 				#root: rootScript = substituteString rootScript "%SPLINEFNS%" splineFns
 				#aim: aimScript = substituteString aimScript "%SPLINEFNS%" splineFns
@@ -1804,63 +1836,121 @@ ca.metre = units.decodeValue "1m"
 			)
 		)
 
-		-- Rebuilds the selected rig from what it was built with, keeping every Car Rig modifier setting and the
-		-- Progress keys. The spline and ground are read fresh, so edits to them are picked up.
-		on btnRefresh pressed do (
-			local root, ca, saved, names, cars, path, grounds, bottom, wheels, mode, fwdIndex, usePivot, useLayer, newRoot, newCa, c, v, i
+		-- Rebuilds a rig with the given spline and ground, keeping every Car Rig modifier setting and the Progress
+		-- keys. The spline and ground are read fresh, so edits to them are picked up. If the spline is swapped and
+		-- Keep speed is on, the Progress keys are stretched to the new spline's length.
+		fn rebuildRig root path grounds = (
+			local ca, saved, keep, cars, oldPath, bottom, wheels, mode, fwdIndex, usePivot, useLayer, newRoot, newCa, c, v
 			global MaxCarRig_grids, MaxCarRig_splines3
-			root = (for o in selection where getUserProp o "MaxCarRig" == true collect o)[1]
-			if root == undefined then messageBox "Select a rig first (the ..._CarRig rectangle)." title:"Car Rig"
-			else if rawProp root "MaxCarRig_inCars" == undefined then messageBox "This rig was built with an older version. Remove it and build it once more; after that Refresh works." title:"Car Rig"
+			cars = for n in nodesFrom (rawProp root "MaxCarRig_inCars") where isValidNode n collect n
+			oldPath = (nodesFrom (rawProp root "MaxCarRig_inPath"))[1]
+			bottom = (nodesFrom (rawProp root "MaxCarRig_inBottom"))[1]
+			wheels = for n in nodesFrom (rawProp root "MaxCarRig_inWheels") collect (if isValidNode n then n else undefined)
+			mode = getUserProp root "MaxCarRig_inMode"
+			fwdIndex = getUserProp root "MaxCarRig_inFwd"
+			usePivot = getUserProp root "MaxCarRig_inPivot" == true
+			useLayer = getUserProp root "MaxCarRig_inLayer" == true
+			if not isValidNode path or not isValidNode bottom or cars.count == 0 then
+				messageBox "The spline, the BOTTOM helper or the car of this rig no longer exists. Build it again." title:"Car Rig"
 			else (
-				cars = for n in nodesFrom (rawProp root "MaxCarRig_inCars") where isValidNode n collect n
-				path = (nodesFrom (rawProp root "MaxCarRig_inPath"))[1]
-				grounds = for n in nodesFrom (rawProp root "MaxCarRig_inGrounds") where isValidNode n collect n
-				bottom = (nodesFrom (rawProp root "MaxCarRig_inBottom"))[1]
-				wheels = for n in nodesFrom (rawProp root "MaxCarRig_inWheels") collect (if isValidNode n then n else undefined)
-				mode = getUserProp root "MaxCarRig_inMode"
-				fwdIndex = getUserProp root "MaxCarRig_inFwd"
-				usePivot = getUserProp root "MaxCarRig_inPivot" == true
-				useLayer = getUserProp root "MaxCarRig_inLayer" == true
-				if not isValidNode path or not isValidNode bottom or cars.count == 0 then
-					messageBox "The spline, the BOTTOM helper or the car of this rig no longer exists. Build it again." title:"Car Rig"
-				else (
-					-- Keep every modifier setting: animated ones as a copy of their controller (keys included).
-					ca = rigParams root
-					names = #(#progress, #lookAhead, #steerMax, #bank, #rayUp, #spin, #suspension, #travel, #diveSquat, #bankTime, #pitchTime, #startTime, #bodyFollow, #bodyLag, #reverse, #realistic, #maxBank, #maxPitch, #cornerSlow, #cornerSpeed, #cornerRadius, #brakeG, #easeOn, #easeStart, #easeStop, #speedSet, #speedUnit, #carType, #suspType, #lookType, #speedLocked)
-					saved = #()
-					for n in names do (
-						c = try (getPropertyController ca (n as string)) catch (undefined)
-						v = try (getProperty ca n) catch (undefined)
-						append saved #(n, (if c != undefined then copy c else undefined), v)
+				-- Keep every modifier setting: animated ones as a copy of their controller (keys included).
+				ca = rigParams root
+				keep = #(#progress, #lookAhead, #steerMax, #bank, #rayUp, #spin, #suspension, #travel, #diveSquat, #bankTime, #pitchTime, #startTime, #bodyFollow, #bodyLag, #reverse, #realistic, #maxBank, #maxPitch, #cornerSlow, #cornerSpeed, #cornerRadius, #brakeG, #easeOn, #easeStart, #easeStop, #speedSet, #speedUnit, #carType, #suspType, #lookType, #speedLocked)
+				saved = #()
+				for n in keep do (
+					c = try (getPropertyController ca (n as string)) catch (undefined)
+					v = try (getProperty ca n) catch (undefined)
+					append saved #(n, (if c != undefined then copy c else undefined), v)
+				)
+				logLine ("Rebuild " + root.name + ": mode " + mode as string + ", " + cars.count as string + " car parts, path " + path.name + ", grounds " + names grounds)
+				undo "Refresh car rig" on (
+					try (
+						removeRig root
+						-- Fresh spline and ground lookups.
+						MaxCarRig_grids = undefined
+						MaxCarRig_splines3 = undefined
+						newRoot = buildRig cars path grounds bottom fwdIndex mode spRay.value wheels usePivot spAhead.value spSteer.value spBank.value
+						newCa = rigParams newRoot
+						for e in saved where e[3] != undefined do (
+							if e[2] != undefined then (try (setPropertyController newCa (e[1] as string) e[2]) catch ())
+							else (try (setProperty newCa e[1] e[3]) catch ())
+						)
+						if path != oldPath and isValidNode oldPath and newCa.speedLocked and curveLength oldPath 1 > 0.0 do
+							stretchProgress newCa ((curveLength path 1) / (curveLength oldPath 1))
+						if useLayer do moveToRigLayer newRoot
+						saveBuildInfo newRoot cars path grounds bottom fwdIndex mode wheels usePivot useLayer
+						watchRigs()
+						select newRoot
+						logLine ("  rebuilt: " + newRoot.name)
 					)
-					logLine ("Refresh " + root.name + ": mode " + mode as string + ", " + cars.count as string + " car parts, " + grounds.count as string + " grounds")
-					undo "Refresh car rig" on (
-						try (
-							removeRig root
-							-- Fresh spline and ground lookups.
-							MaxCarRig_grids = undefined
-							MaxCarRig_splines3 = undefined
-							newRoot = buildRig cars path grounds bottom fwdIndex mode spRay.value wheels usePivot spAhead.value spSteer.value spBank.value
-							newCa = rigParams newRoot
-							for e in saved where e[3] != undefined do (
-								if e[2] != undefined then (try (setPropertyController newCa (e[1] as string) e[2]) catch ())
-								else (try (setProperty newCa e[1] e[3]) catch ())
-							)
-							if useLayer do moveToRigLayer newRoot
-							saveBuildInfo newRoot cars path grounds bottom fwdIndex mode wheels usePivot useLayer
-							watchRigs()
-							select newRoot
-							logLine ("  refreshed: " + newRoot.name)
-						)
-						catch (
-							logLine ("  refresh failed: " + getCurrentException())
-							messageBox ("Refresh failed:\n" + getCurrentException() + "\n\nLog: " + logPath) title:"Car Rig"
-						)
+					catch (
+						newRoot = undefined
+						logLine ("  rebuild failed: " + getCurrentException())
+						messageBox ("Refresh failed:\n" + getCurrentException() + "\n\nLog: " + logPath) title:"Car Rig"
 					)
 				)
 			)
+			newRoot
 		)
+
+		on btnRefresh pressed do (
+			local root = (for o in selection where getUserProp o "MaxCarRig" == true collect o)[1]
+			if root == undefined then messageBox "Select a rig first (the ..._CarRig rectangle)." title:"Car Rig"
+			else if rawProp root "MaxCarRig_inCars" == undefined then messageBox "This rig was built with an older version. Remove it and build it once more; after that Refresh works." title:"Car Rig"
+			else rebuildRig root (nodesFrom (rawProp root "MaxCarRig_inPath"))[1] (for n in nodesFrom (rawProp root "MaxCarRig_inGrounds") where isValidNode n collect n)
+		)
+
+		-- Change a built rig: the panel follows the last rig selected, so ground objects can then be selected and
+		-- added without losing it. Each change rebuilds the rig at once (as Refresh does) with the new spline or
+		-- ground list.
+		-- The rig being changed, or undefined after telling the user why not.
+		fn editRig needGround = (
+			global MaxCarRig_editRoot
+			local r = MaxCarRig_editRoot
+			if not isValidNode r then (messageBox "Select a rig first (the ..._CarRig rectangle)." title:"Car Rig"; undefined)
+			else if needGround and getUserProp r "MaxCarRig_inMode" == 1 then (messageBox "This rig is in Simple mode, which does not use ground." title:"Car Rig"; undefined)
+			else r
+		)
+		fn rigGrounds r = for n in nodesFrom (rawProp r "MaxCarRig_inGrounds") where isValidNode n collect n
+		fn changeRig r path grounds = (
+			global MaxCarRig_editRoot
+			local newRoot = rebuildRig r path grounds
+			if newRoot != undefined do MaxCarRig_editRoot = newRoot
+			showEditRig()
+		)
+		on btnEditAdd pressed do (
+			local r = (editRig true), grounds, carAll, added
+			if r != undefined do (
+				grounds = rigGrounds r
+				carAll = withDescendants (for n in nodesFrom (rawProp r "MaxCarRig_inCars") where isValidNode n collect n)
+				added = for o in selection where geoFilt o and not isGroupHead o and findItem grounds o == 0 and findItem carAll o == 0 and getUserProp o "MaxCarRig" != true collect o
+				if added.count == 0 then messageBox "Select the new ground objects in the viewport first (not the car or the rig), then press Add selected." title:"Car Rig"
+				else changeRig r (nodesFrom (rawProp r "MaxCarRig_inPath"))[1] (grounds + added)
+			)
+		)
+		on btnEditDel pressed do (
+			local r = (editRig true), grounds
+			if r != undefined and lbEditGround.selection > 0 do (
+				grounds = rigGrounds r
+				deleteItem grounds lbEditGround.selection
+				changeRig r (nodesFrom (rawProp r "MaxCarRig_inPath"))[1] grounds
+			)
+		)
+		on btnEditSurf pressed do (
+			local r = (editRig true), grounds, surfs, added
+			if r != undefined do (
+				grounds = rigGrounds r
+				surfs = for n in objects where matchPattern (tagOf n) pattern:"CAR_SURFACE*" or tagOf n == "SURFACE" collect n
+				added = for g in withDescendants surfs where geoFilt g and findItem grounds g == 0 collect g
+				if added.count == 0 then messageBox "No new CAR SURFACE objects found. Every one is already in this rig's ground list." title:"Car Rig"
+				else changeRig r (nodesFrom (rawProp r "MaxCarRig_inPath"))[1] (grounds + added)
+			)
+		)
+		on pbEditPath picked o do (
+			local r = (editRig false)
+			if r != undefined do changeRig r o (rigGrounds r)
+		)
+		on MaxCarRig_UI close do callbacks.removeScripts id:#MaxCarRigSel
 
 		on btnRemove pressed do (
 			local roots = for o in selection where getUserProp o "MaxCarRig" == true collect o
