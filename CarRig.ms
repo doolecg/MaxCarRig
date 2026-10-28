@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.19.1" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.19.2" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local wheelTags = #( \
@@ -985,7 +985,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.19.1"
+		local toolVersion = "0.19.2"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -1147,7 +1147,7 @@ buttonText:"SCR"
 		-- Every local is declared at the top: Max 2026 throws "Bad free thunk" for locals
 		-- declared inside if/else blocks and then read in a for-loop.
 		fn buildRig cars path grounds bottom fwdIndex mode rayUp wheels usePivot lookAhead steerMax bank = (
-			local picked, base, tm, inv, bb, carLen, carWid, carSize, wheelSize, root, m, ca, offs, lenText, suspH, psc, cw, rest, bankRest, b, tyreCyls = #()
+			local picked, base, tm, inv, bb, carLen, carWid, carSize, wheelSize, root, m, ca, offs, lenText, suspH, psc, cw, rest, bankRest, b, tyreCyls = #(), later = #()
 			-- The spline length is measured once here and written into the scripts: measuring it every frame
 			-- in every script was a large share of the playback cost. Rebuild the rig after editing the spline.
 			lenText = (amax 0.001 (curveLength path 1)) as string
@@ -1238,7 +1238,7 @@ ca.metre = units.decodeValue "1m"
 				bc.AddNode "rig" root
 				bc.AddObject "progCtrl" (getPropertyController ca "progress")
 				bc.script = substituteString (substituteString bankScript "%METRE%" ((units.decodeValue "1m") as string)) "%REST%" (bankRest as string)
-				bankH.transform.controller = bc
+				append later #(bankH, #transform, bc)
 
 				if steering do (
 					sc = rotation_script()
@@ -1249,7 +1249,7 @@ ca.metre = units.decodeValue "1m"
 						st.row4 = wheelCentre wheels[i] usePivot
 						sh = rigHelper (base + (if i == 1 then "_CarRig_SteerFL" else "_CarRig_SteerFR")) st (wheelSize * 1.3) (color 196 120 90) true
 						sh.parent = root
-						sh.rotation.controller = sc
+						append later #(sh, #rotation, sc)
 						steerHs[i] = sh
 					)
 				)
@@ -1299,7 +1299,7 @@ ca.metre = units.decodeValue "1m"
 					c = wheelCentre wheels[i] false
 					s = substituteString s "%CONTACT%" (([c.x, c.y, c.z - wheelRadius wheels[i]] * inv) as string)
 					psc.script = s
-					suspH.position.controller = psc
+					append later #(suspH, #position, psc)
 					spinH.parent = suspH
 					baseRot = (spinH.rotation.controller.value) as matrix3
 					spc = rotation_script()
@@ -1311,7 +1311,7 @@ ca.metre = units.decodeValue "1m"
 					s = substituteString s "%AXIS%" axisNames[axisK]
 					s = substituteString s "%SIGN%" (axisSign as string)
 					spc.script = substituteString (substituteString s "%BASE%" ("(" + baseRot as string + ")")) "%LEN%" lenText
-					spinH.rotation.controller = spc
+					append later #(spinH, #rotation, spc)
 					linkTo wheels[i] spinH
 					-- Brakes and callipers steer with the wheel but must not spin with it.
 					for n in withDescendants #(wheels[i]) where n != wheels[i] and isBrake n do linkTo n wheelHolder
@@ -1334,6 +1334,14 @@ ca.metre = units.decodeValue "1m"
 			s = substituteString s "%GROUNDS%" (listText (for i = 1 to grounds.count collect ("g" + i as string)))
 			s = substituteString s "%OFFSETS%" (listText offs)
 			s = substituteString s "%TYRES%" (if mode == 3 then "tyre1, tyre2, tyre3, tyre4" else "")
+			-- The helper scripts go on only now, with every wheel and body part linked. A script put on earlier
+			-- moved its helper at once (the suspension to the ground under the car, steering to the bend), and
+			-- whatever was linked to it afterwards kept that as a fixed offset: wheels sat 5 cm into the road.
+			for e in later do case e[2] of (
+				#position: e[1].position.controller = e[3]
+				#rotation: e[1].rotation.controller = e[3]
+				#transform: e[1].transform.controller = e[3]
+			)
 			ctrl = transform_script()
 			root.transform.controller = ctrl
 			ctrl.AddNode "sp" path
