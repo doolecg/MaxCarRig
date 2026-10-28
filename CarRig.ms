@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.14.0" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.15.0" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		local wheelTags = #( \
@@ -828,6 +828,41 @@ buttonText:"SCR"
 				)
 			)
 
+			-- Change this rig's ground and spline. The rebuild is done by the Car Rig tool, which opens if needed.
+			rollout rChange "Car Rig: ground and spline"
+			(
+				fn isShape o = superClassOf o == Shape
+				listbox lbGround "Ground" height:4
+				pickbutton pbAdd "Pick ground to add" width:140
+				button btnDel "Remove from list" width:140
+				button btnSurf "Add CAR SURFACE" width:140
+				pickbutton pbPath "Pick new spline" filter:isShape width:140
+				fn rigNode =
+				(
+					local m = custAttributes.getOwner this
+					if m == undefined then undefined else (for n in refs.dependentNodes m where isValidNode n collect n)[1]
+				)
+				fn listGrounds =
+				(
+					local r = rigNode(), txt
+					txt = if r == undefined then undefined else getUserProp r "MaxCarRig_inGrounds"
+					lbGround.items = if txt == undefined then #() else \
+						for h in filterString (txt as string) "n_" where isValidNode (maxOps.getNodeByHandle (h as integer)) collect (maxOps.getNodeByHandle (h as integer)).name
+				)
+				fn ask action arg =
+				(
+					global MaxCarRig_UI, MaxCarRig_changeLater
+					if MaxCarRig_UI == undefined or not MaxCarRig_UI.open do (try (macros.run "V1_Scripts" "V1_SimpleCarRig") catch ())
+					if MaxCarRig_changeLater == undefined then messageBox "Install the Car Rig tool (V1_SimpleCarRig.mzp) to change the ground or spline." title:"Car Rig"
+					else MaxCarRig_changeLater (rigNode()) action arg
+				)
+				on rChange open do listGrounds()
+				on pbAdd picked o do ask #add #(o)
+				on btnDel pressed do if lbGround.selection > 0 do ask #remove lbGround.selection
+				on btnSurf pressed do ask #surface undefined
+				on pbPath picked o do ask #path o
+			)
+
 			rollout rWheels "Car Rig: wheels"
 			(
 				spinner spSpin "Tyre spin x" range:[-100, 100, 1] fieldwidth:64
@@ -853,7 +888,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.14.0"
+		local toolVersion = "0.15.0"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -1437,6 +1472,8 @@ ca.metre = units.decodeValue "1m"
 		on MaxCarRig_UI open do (
 			local fontStyle = dotNetClass "System.Drawing.FontStyle"
 			watchRigs()
+			-- Re-reading the modifier definition brings rigs built with older versions up to date (new panels).
+			paramsCA()
 			global MaxCarRig_onSel
 			MaxCarRig_onSel = onSelChanged
 			callbacks.removeScripts id:#MaxCarRigSel
@@ -1935,14 +1972,6 @@ ca.metre = units.decodeValue "1m"
 		-- Change a built rig: the panel follows the last rig selected, so ground objects can then be selected and
 		-- added without losing it. Each change rebuilds the rig at once (as Refresh does) with the new spline or
 		-- ground list.
-		-- The rig being changed, or undefined after telling the user why not.
-		fn editRig needGround = (
-			global MaxCarRig_editRoot
-			local r = MaxCarRig_editRoot
-			if not isValidNode r then (messageBox "Select a rig first (the ..._CarRig rectangle)." title:"Car Rig"; undefined)
-			else if needGround and getUserProp r "MaxCarRig_inMode" == 1 then (messageBox "This rig is in Simple mode, which does not use ground." title:"Car Rig"; undefined)
-			else r
-		)
 		fn rigGrounds r = for n in nodesFrom (rawProp r "MaxCarRig_inGrounds") where isValidNode n collect n
 		fn changeRig r path grounds = (
 			global MaxCarRig_editRoot
@@ -1950,37 +1979,70 @@ ca.metre = units.decodeValue "1m"
 			if newRoot != undefined do MaxCarRig_editRoot = newRoot
 			showEditRig()
 		)
-		on btnEditAdd pressed do (
-			local r = (editRig true), grounds, carAll, added
-			if r != undefined do (
+		-- One change to a built rig. action: #add (arg = nodes; groups count as their meshes), #remove (arg = list
+		-- index), #surface (every CAR SURFACE object not yet in the list), #path (arg = the new spline).
+		fn doChange r action arg = (
+			local grounds, path, carAll, surfs, added = #()
+			if not isValidNode r then messageBox "Select a rig first (the ..._CarRig rectangle)." title:"Car Rig"
+			else if rawProp r "MaxCarRig_inCars" == undefined then messageBox "This rig was built with an older version. Remove it and build it once more; after that it can be changed." title:"Car Rig"
+			else if action != #path and getUserProp r "MaxCarRig_inMode" == 1 then messageBox "This rig is in Simple mode, which does not use ground." title:"Car Rig"
+			else (
 				grounds = rigGrounds r
+				path = (nodesFrom (rawProp r "MaxCarRig_inPath"))[1]
 				carAll = withDescendants (for n in nodesFrom (rawProp r "MaxCarRig_inCars") where isValidNode n collect n)
-				added = for o in selection where geoFilt o and not isGroupHead o and findItem grounds o == 0 and findItem carAll o == 0 and getUserProp o "MaxCarRig" != true collect o
-				if added.count == 0 then messageBox "Select the new ground objects in the viewport first (not the car or the rig), then press Add selected." title:"Car Rig"
-				else changeRig r (nodesFrom (rawProp r "MaxCarRig_inPath"))[1] (grounds + added)
+				case action of (
+					#add: added = for o in withDescendants arg where geoFilt o and not isGroupHead o and findItem grounds o == 0 and findItem carAll o == 0 and getUserProp o "MaxCarRig" != true collect o
+					#surface: (
+						surfs = for n in objects where matchPattern (tagOf n) pattern:"CAR_SURFACE*" or tagOf n == "SURFACE" collect n
+						added = for g in withDescendants surfs where geoFilt g and findItem grounds g == 0 collect g
+					)
+					#remove: if arg >= 1 and arg <= grounds.count do (deleteItem grounds arg; added = undefined)
+					#path: (path = arg; added = undefined)
+				)
+				case of (
+					(added == undefined): changeRig r path grounds
+					(added.count > 0): changeRig r path (grounds + added)
+					(action == #add): messageBox "Nothing to add. Pick ground objects that are not the car, the rig or already in the list." title:"Car Rig"
+					(action == #surface): messageBox "No new CAR SURFACE objects found. Every one is already in this rig's ground list." title:"Car Rig"
+				)
 			)
+		)
+		-- The rig's own modifier panel asks for changes through here. The rebuild deletes that modifier, so it
+		-- waits for the button click to finish (a short timer) instead of running inside it.
+		fn runQueued s e = (
+			global MaxCarRig_job
+			local j = MaxCarRig_job
+			s.Stop()
+			MaxCarRig_job = undefined
+			if j != undefined do doChange j[1] j[2] j[3]
+		)
+		fn queueChange r action arg = (
+			global MaxCarRig_job, MaxCarRig_jobTimer
+			MaxCarRig_job = #(r, action, arg)
+			if MaxCarRig_jobTimer == undefined do (
+				MaxCarRig_jobTimer = dotNetObject "System.Windows.Forms.Timer"
+				MaxCarRig_jobTimer.Interval = 50
+				dotNet.addEventHandler MaxCarRig_jobTimer "Tick" runQueued
+				dotNet.setLifetimeControl MaxCarRig_jobTimer #mxs
+			)
+			MaxCarRig_jobTimer.Start()
+		)
+		on btnEditAdd pressed do (
+			global MaxCarRig_editRoot
+			if selection.count == 0 then messageBox "Select the new ground objects in the viewport first, then press Add selected." title:"Car Rig"
+			else doChange MaxCarRig_editRoot #add (for o in selection collect o)
 		)
 		on btnEditDel pressed do (
-			local r = (editRig true), grounds
-			if r != undefined and lbEditGround.selection > 0 do (
-				grounds = rigGrounds r
-				deleteItem grounds lbEditGround.selection
-				changeRig r (nodesFrom (rawProp r "MaxCarRig_inPath"))[1] grounds
-			)
+			global MaxCarRig_editRoot
+			if lbEditGround.selection > 0 do doChange MaxCarRig_editRoot #remove lbEditGround.selection
 		)
 		on btnEditSurf pressed do (
-			local r = (editRig true), grounds, surfs, added
-			if r != undefined do (
-				grounds = rigGrounds r
-				surfs = for n in objects where matchPattern (tagOf n) pattern:"CAR_SURFACE*" or tagOf n == "SURFACE" collect n
-				added = for g in withDescendants surfs where geoFilt g and findItem grounds g == 0 collect g
-				if added.count == 0 then messageBox "No new CAR SURFACE objects found. Every one is already in this rig's ground list." title:"Car Rig"
-				else changeRig r (nodesFrom (rawProp r "MaxCarRig_inPath"))[1] (grounds + added)
-			)
+			global MaxCarRig_editRoot
+			doChange MaxCarRig_editRoot #surface undefined
 		)
 		on pbEditPath picked o do (
-			local r = (editRig false)
-			if r != undefined do changeRig r o (rigGrounds r)
+			global MaxCarRig_editRoot
+			doChange MaxCarRig_editRoot #path o
 		)
 		on MaxCarRig_UI close do callbacks.removeScripts id:#MaxCarRigSel
 
@@ -1995,6 +2057,8 @@ ca.metre = units.decodeValue "1m"
 	on execute do (
 		try (destroyDialog MaxCarRig_UI) catch ()
 		createDialog MaxCarRig_UI
+		global MaxCarRig_changeLater
+		MaxCarRig_changeLater = MaxCarRig_UI.queueChange
 	)
 )
 
