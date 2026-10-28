@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.22.1" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.23.0" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		-- Tyre collision shapes as the user left them (place, Radius, Height per wheel), handed from a rebuild
@@ -36,6 +36,10 @@ buttonText:"SCR"
 	-- the rig asked several times a frame. The table is rebuilt when the spline moves, its knot count changes,
 	-- or its shape changes: a sum of its knots and handles is re-checked at most every 0.2 seconds.
 	global MaxCarRig_splines4
+	-- Path smoothing: each rig script sets this from its rig before any spline lookup (scripts run one at a
+	-- time), so every part of the rig drives the same smoothed path.
+	global MaxCarRig_sm
+	fn smoothOf ca = try (ca.pathSmooth / 100.0 * 15.0 * ca.metre) catch (0.0)
 	fn splinePrint sp =
 	(
 		local fp = [0,0,0], i
@@ -44,9 +48,10 @@ buttonText:"SCR"
 	)
 	fn splineTable sp =
 	(
-		local tab, key1, key2, e, pts, lens, tans, ns, i, j, total, steps = 24, fp, turns, a, b
+		local tab, key1, key2, e, pts, lens, tans, ns, i, j, total, steps = 24, fp, turns, a, b, sm, raw, rl, w, ws, acc, h
 		if MaxCarRig_splines4 == undefined do MaxCarRig_splines4 = #()
-		key1 = sp.transform as string
+		sm = if MaxCarRig_sm == undefined then 0.0 else MaxCarRig_sm
+		key1 = (sp.transform as string) + (sm as string)
 		key2 = numKnots sp 1
 		for i = MaxCarRig_splines4.count to 1 by -1 do
 		(
@@ -74,6 +79,32 @@ buttonText:"SCR"
 			for i = 1 to ns do
 				for j = (if i == 1 then 0 else 1) to steps do
 					append pts (in coordsys world interpBezier3D sp 1 i ((j as float) / steps))
+			-- Path smoothing: every point becomes a weighted average of the spline around it, up to sm either
+			-- way along the spline (less near the ends, so the start and end stay put). Bends get rounder and
+			-- the car cuts them a little, like a driver taking a smoother line; 0 follows the spline exactly.
+			if sm > 0.0 do
+			(
+				raw = pts
+				rl = #(0.0)
+				for i = 2 to raw.count do append rl (rl[i - 1] + distance raw[i] raw[i - 1])
+				pts = for i = 1 to raw.count collect
+				(
+					h = amin sm (amin rl[i] (rl[raw.count] - rl[i]))
+					if h <= 0.0 then raw[i]
+					else
+					(
+						acc = [0, 0, 0]
+						ws = 0.0
+						for j = 1 to raw.count where (abs (rl[j] - rl[i])) < h do
+						(
+							w = 1.0 - (abs (rl[j] - rl[i])) / h
+							acc += raw[j] * w
+							ws += w
+						)
+						acc / ws
+					)
+				)
+			)
 			lens = #(0.0)
 			total = 0.0
 			for i = 2 to pts.count do
@@ -408,6 +439,7 @@ buttonText:"SCR"
 	local u, p, fwd, y, h, up, guess, hits, w, x, tm, mid, offMid, sa, missed, nh, zs, i
 	%RAYFNS%
 	%SPLINEFNS%
+	MaxCarRig_sm = smoothOf rigCA
 	fn frameFrom x z pos =
 	(
 		local y = normalize (cross z x)
@@ -484,6 +516,7 @@ buttonText:"SCR"
 		-- Aim null (Position Script): Look ahead units further along the spline than the car.
 		local aimScript = @"(
 	%SPLINEFNS%
+	MaxCarRig_sm = smoothOf rigCA
 	local len = (splineTable sp)[3]
 	local a = if len < 0.001 then 0.0 else ahead / len
 	local u = travelAt sp F rigCA
@@ -500,6 +533,7 @@ buttonText:"SCR"
 	local len, u, s, uf, ua, t, v, ang, k, ur, rad, dn, kap
 	local wb = %WB%, rearD = %REAR%, side = %SIDE%
 	%SPLINEFNS%
+	MaxCarRig_sm = smoothOf rigCA
 	fn wrapU sp x = if isClosed sp 1 then (mod ((mod x 1.0) + 1.0) 1.0) else (amax 0.0 (amin 1.0 x))
 	len = (splineTable sp)[3]
 	s = if rigCA.reverse then -1.0 else 1.0
@@ -546,6 +580,7 @@ buttonText:"SCR"
 		-- With Realistic body motion on, the body also follows the ground's rise, pitch and roll late (Body lag).
 		local bankScript = @"(
 	%SPLINEFNS%
+	MaxCarRig_sm = smoothOf rigCA
 	local rest = %REST%
 	local metre = %METRE%
 	local dh = 0.0, dp = 0.0, dr = 0.0, n, i, k, j, w, wsum, tk, uk, pk, hh, pp, rr, h0, p0, r0, out
@@ -691,6 +726,7 @@ buttonText:"SCR"
 		-- that points across the car (%AXIS%), so a wheel spins about its own axle.
 		local spinScript = @"(
 	%SPLINEFNS%
+	MaxCarRig_sm = smoothOf rigCA
 	local q = travelAt sp F rigCA, dist, turn
 	-- Differential: in a bend the outer wheels roll further than the inner ones. Each wheel rolls the road's
 	-- length less its offset to the left times how far the car has turned (left turns positive), so the
@@ -728,6 +764,7 @@ buttonText:"SCR"
 				-- Set at build: one metre in scene units, and the spline, for the speed tools.
 				metre type:#float default:1000.0
 				pathHandle type:#integer default:0
+				pathSmooth type:#float ui:spPathSmooth default:0.0
 			)
 			parameters pBank rollout:rBank
 			(
@@ -892,6 +929,8 @@ buttonText:"SCR"
 				spinner spAhead "Look ahead" type:#worldunits range:[0, 1e6, 4000] fieldwidth:64
 				spinner spSteer "Max steer" range:[0, 89, 35] fieldwidth:64
 				checkbox cbReverse "Reverse along spline"
+				-- 0 follows the spline exactly; higher takes a smoother line through bends (up to 15 m either way).
+				spinner spPathSmooth "Path smoothing %" range:[0, 100, 0] fieldwidth:64
 				checkbox cbEase "Ease in / out"
 				spinner spEaseStart "Start frames" range:[0, 1000, 40] fieldwidth:64
 				spinner spEaseStop "Stop frames" range:[0, 1000, 40] fieldwidth:64
@@ -1074,7 +1113,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.22.1"
+		local toolVersion = "0.23.0"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -2215,7 +2254,7 @@ ca.metre = units.decodeValue "1m"
 			else (
 				-- Keep every modifier setting: animated ones as a copy of their controller (keys included).
 				ca = rigParams root
-				keep = #(#progress, #lookAhead, #steerMax, #bank, #rayUp, #spin, #suspension, #travel, #diveSquat, #bankTime, #pitchTime, #startTime, #bodyFollow, #bodyLag, #reverse, #realistic, #maxBank, #maxPitch, #cornerSlow, #cornerSpeed, #cornerRadius, #brakeG, #easeOn, #easeStart, #easeStop, #speedSet, #speedUnit, #carType, #suspType, #lookType, #speedLocked, #kerbSlow, #tyreSteps, #liftSmooth)
+				keep = #(#progress, #lookAhead, #steerMax, #bank, #rayUp, #spin, #suspension, #travel, #diveSquat, #bankTime, #pitchTime, #startTime, #bodyFollow, #bodyLag, #reverse, #realistic, #maxBank, #maxPitch, #cornerSlow, #cornerSpeed, #cornerRadius, #brakeG, #easeOn, #easeStart, #easeStop, #speedSet, #speedUnit, #carType, #suspType, #lookType, #speedLocked, #kerbSlow, #tyreSteps, #liftSmooth, #pathSmooth)
 				saved = #()
 				for n in keep do (
 					c = try (getPropertyController ca (n as string)) catch (undefined)
