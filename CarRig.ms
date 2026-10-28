@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.23.0" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.24.0" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		-- Tyre collision shapes as the user left them (place, Radius, Height per wheel), handed from a rebuild
@@ -702,6 +702,29 @@ buttonText:"SCR"
 	out
 )"
 
+		-- Camera mount (Transform Script, under the rig root): follows the rig, so a camera linked under it
+		-- rides with the car wherever it is placed. Stabiliser smooths the mount over frames around this one
+		-- (five samples, up to 12 frames either way), so bumps and kerbs do not shake the shot; Keep horizon
+		-- level stops the camera rolling and pitching with the body. Returns the mount relative to the rig.
+		local camScript = @"(
+	local tm, stepF, k, j, acc = [0, 0, 0], xs = [0, 0, 0], zs = [0, 0, 0], n = 0, x, y, z
+	tm = rig.transform
+	stepF = (floor (rigCA.camStab * 6.0 + 0.5)) as integer
+	for k = -2 to 2 where stepF > 0 or k == 0 do
+	(
+		j = at time ((F + k * stepF) as time) rig.transform
+		acc += j.row4
+		xs += j.row1
+		zs += j.row3
+		n += 1
+	)
+	x = normalize xs
+	z = if rigCA.camLevel then [0, 0, 1] else normalize zs
+	y = normalize (cross z x)
+	x = cross y z
+	(matrix3 x y z (acc / n)) * (inverse tm)
+)"
+
 		-- Suspension (Position Script, one per wheel): the tyre's contact (round and wide, see tyreDown); the
 		-- wheel moves along the rig's up axis by how far the ground there is above or below the body's plane,
 		-- up to Travel, scaled by Suspension (0 = off, 1 = full).
@@ -796,6 +819,11 @@ buttonText:"SCR"
 			parameters pChange rollout:rChange
 			(
 				showHelpers type:#boolean ui:cbHelpers default:true
+			)
+			parameters pCamera rollout:rCamera
+			(
+				camStab type:#float ui:spCamStab default:0.5
+				camLevel type:#boolean ui:cbCamLevel default:true
 			)
 			parameters pCorner rollout:rCorner
 			(
@@ -1102,6 +1130,24 @@ buttonText:"SCR"
 				spinner spLag "Lag frames" range:[0, 12, 3] fieldwidth:64
 			)
 
+			-- Cameras that ride with the car. Add camera makes one behind and above the car; move and turn it
+			-- anywhere and it stays put relative to the car. The Car Rig tool does the adding (it opens if needed).
+			rollout rCamera "Car Rig: camera"
+			(
+				button btnCam "Add camera" width:140
+				spinner spCamStab "Stabiliser" range:[0, 1, 0.5] fieldwidth:64
+				checkbox cbCamLevel "Keep horizon level"
+				on btnCam pressed do
+				(
+					global MaxCarRig_UI, MaxCarRig_changeLater
+					local m = custAttributes.getOwner this, r
+					r = if m == undefined then undefined else (for n in refs.dependentNodes m where isValidNode n collect n)[1]
+					if MaxCarRig_UI == undefined or not MaxCarRig_UI.open do (try (macros.run "V1_Scripts" "V1_SimpleCarRig") catch ())
+					if MaxCarRig_changeLater == undefined then messageBox "Install the Car Rig tool (V1_SimpleCarRig.mzp) to add a camera." title:"Car Rig"
+					else MaxCarRig_changeLater r #camera undefined
+				)
+			)
+
 			rollout rCorner "Car Rig: corner slowdown"
 			(
 				checkbox cbCorner "Slow on corners"
@@ -1113,7 +1159,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.23.0"
+		local toolVersion = "0.24.0"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -2234,12 +2280,38 @@ ca.metre = units.decodeValue "1m"
 			)
 		)
 
+		-- A camera mount under the rig root, and under it a camera: a new one behind and above the car looking at
+		-- it, or a kept one put back where it was on the car (camTm = its place relative to its old mount).
+		fn addCamera root cam camTm = (
+			local mount, ctrl, ca = rigParams root, len, tmc, d
+			mount = Point name:(uniqueName (root.name + "_CamMount")) transform:root.transform size:(root.width * 0.15) box:true cross:false axisTripod:false centerMarker:false wirecolor:(color 120 200 255)
+			setUserProp mount "MaxCarRig_helper" true
+			setUserProp mount "MaxCarRig_camMount" true
+			mount.parent = root
+			ctrl = transform_script()
+			ctrl.AddNode "rig" root
+			ctrl.AddObject "rigCA" ca
+			ctrl.script = camScript
+			mount.transform.controller = ctrl
+			if cam == undefined then (
+				len = root.width
+				-- Behind and above the car, looking forward and a little down at it (a camera looks down its -Z, so
+				-- d, its Z axis, points back and up).
+				d = normalize [-1, 0, 0.25]
+				tmc = matrix3 (normalize (cross [0, 0, 1] d)) (normalize (cross d (cross [0, 0, 1] d))) d [-len * 0.9, 0, len * 0.3]
+				cam = Freecamera name:(uniqueName (root.name + "_Cam")) fov:50
+				cam.transform = tmc * mount.transform
+			) else cam.transform = camTm * mount.transform
+			cam.parent = mount
+			cam
+		)
+
 		-- Rebuilds a rig with the given spline and ground, keeping every Car Rig modifier setting and the Progress
 		-- keys. The spline and ground are read fresh, so edits to them are picked up. If the spline is swapped and
 		-- Keep speed is on, the Progress keys are stretched to the new spline's length.
 		fn rebuildRig root path grounds = (
 			local ca, saved, keep, cars, oldPath, bottom, wheels, mode, fwdIndex, usePivot, useLayer, newRoot, newCa, c, v
-			local edits = #(undefined, undefined, undefined, undefined), bottomLocal, loc, sc, k
+			local edits = #(undefined, undefined, undefined, undefined), bottomLocal, loc, sc, k, cams = #()
 			global MaxCarRig_grids, MaxCarRig_splines4
 			cars = for n in nodesFrom (rawProp root "MaxCarRig_inCars") where isValidNode n collect n
 			oldPath = (nodesFrom (rawProp root "MaxCarRig_inPath"))[1]
@@ -2254,7 +2326,7 @@ ca.metre = units.decodeValue "1m"
 			else (
 				-- Keep every modifier setting: animated ones as a copy of their controller (keys included).
 				ca = rigParams root
-				keep = #(#progress, #lookAhead, #steerMax, #bank, #rayUp, #spin, #suspension, #travel, #diveSquat, #bankTime, #pitchTime, #startTime, #bodyFollow, #bodyLag, #reverse, #realistic, #maxBank, #maxPitch, #cornerSlow, #cornerSpeed, #cornerRadius, #brakeG, #easeOn, #easeStart, #easeStop, #speedSet, #speedUnit, #carType, #suspType, #lookType, #speedLocked, #kerbSlow, #tyreSteps, #liftSmooth, #pathSmooth)
+				keep = #(#progress, #lookAhead, #steerMax, #bank, #rayUp, #spin, #suspension, #travel, #diveSquat, #bankTime, #pitchTime, #startTime, #bodyFollow, #bodyLag, #reverse, #realistic, #maxBank, #maxPitch, #cornerSlow, #cornerSpeed, #cornerRadius, #brakeG, #easeOn, #easeStart, #easeStop, #speedSet, #speedUnit, #carType, #suspType, #lookType, #speedLocked, #kerbSlow, #tyreSteps, #liftSmooth, #pathSmooth, #camStab, #camLevel)
 				saved = #()
 				for n in keep do (
 					c = try (getPropertyController ca (n as string)) catch (undefined)
@@ -2275,6 +2347,10 @@ ca.metre = units.decodeValue "1m"
 					)
 				)
 				bottomLocal = bottom.transform * inverse root.transform
+				-- Cameras on the rig are kept, each at its place on the car.
+				for mt in withDescendants #(root) where getUserProp mt "MaxCarRig_camMount" == true do
+					for cm in mt.children do append cams #(cm, cm.transform * inverse mt.transform)
+				for e in cams do e[1].parent = undefined
 				undo "Refresh car rig" on (
 					try (
 						removeRig root
@@ -2295,6 +2371,7 @@ ca.metre = units.decodeValue "1m"
 							stretchProgress newCa ((curveLength path 1) / (curveLength oldPath 1))
 						if useLayer do moveToRigLayer newRoot
 						saveBuildInfo newRoot cars path grounds bottom fwdIndex mode wheels usePivot useLayer
+						for e in cams where isValidNode e[1] do addCamera newRoot e[1] e[2]
 						watchRigs()
 						select newRoot
 						logLine ("  rebuilt: " + newRoot.name)
@@ -2334,6 +2411,8 @@ ca.metre = units.decodeValue "1m"
 			if not isValidNode r then messageBox "Select a rig first (the ..._CarRig rectangle)." title:"Car Rig"
 			else if action == #refresh and rawProp r "MaxCarRig_inCars" != undefined then
 				changeRig r (nodesFrom (rawProp r "MaxCarRig_inPath"))[1] (rigGrounds r)
+			else if action == #camera then
+				undo "Add rig camera" on (select (addCamera r undefined undefined))
 			else if rawProp r "MaxCarRig_inCars" == undefined then messageBox "This rig was built with an older version. Remove it and build it once more; after that it can be changed." title:"Car Rig"
 			else if action != #path and getUserProp r "MaxCarRig_inMode" == 1 then messageBox "This rig is in Simple mode, which does not use ground." title:"Car Rig"
 			else (
