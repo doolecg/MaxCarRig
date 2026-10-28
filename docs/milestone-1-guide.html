@@ -160,6 +160,13 @@
     <li>Car Rig: wheels: Collision detail (default 12 samples per tyre) sets how exactly kerbs are felt. Higher is more exact, slower to play back.</li>
     <li>Lift smoothing (default 0.3): 0 is the true tyre; raise it towards 1 for an earlier, gentler rise over kerbs and bumps.</li>
   </ol>
+  <h3>0.21.0: fit the tyre shapes and BOTTOM, then update</h3>
+  <ol>
+    <li>Build a rig. Select a tyre shape (light-blue outline, ..._CarRig_TyreFL), then move, rotate or scale it, or change its Radius and Height, so it hugs the tyre.</li>
+    <li>Move CarRig_BOTTOM up or down if the car sits too high or low.</li>
+    <li>Select the rig, open its modifier, "Car Rig: ground and spline", press Update rig from helpers (or Refresh selected rig in the tool).</li>
+    <li>The rig rebuilds: each tyre shape stays where you put it and the tyre meets the ground at its bottom; BOTTOM stays where you moved it. Settings and Progress keys are kept.</li>
+  </ol>
 </div>
 
 <h2>4. Review checklist (about 30 minutes)</h2>

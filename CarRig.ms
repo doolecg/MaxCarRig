@@ -12,9 +12,12 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.20.0" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.21.0" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
+		-- Tyre collision shapes as the user left them (place, Radius, Height per wheel), handed from a rebuild
+		-- to buildRig so hand-fitted shapes survive Refresh / Update.
+		local tyreEdits = undefined
 		local wheelTags = #( \
 			#("FRONT_LEFT", "FL", "LEFT_FRONT", "WHEEL_FL", "FRONT_LEFT_WHEEL"), \
 			#("FRONT_RIGHT", "FR", "RIGHT_FRONT", "WHEEL_FR", "FRONT_RIGHT_WHEEL"), \
@@ -929,6 +932,8 @@ buttonText:"SCR"
 				button btnSurf "Add CAR SURFACE" width:140
 				pickbutton pbPath "Pick new spline" filter:isShape width:140
 				checkbox cbHelpers "Show helpers"
+				-- After moving or resizing a tyre shape (..._CarRig_Tyre..) or moving BOTTOM, rebuild the rig from them.
+				button btnUpdate "Update rig from helpers" width:140
 				fn rigNode =
 				(
 					local m = custAttributes.getOwner this
@@ -968,6 +973,7 @@ buttonText:"SCR"
 				on btnDel pressed do if lbGround.selection > 0 do ask #remove lbGround.selection
 				on btnSurf pressed do ask #surface undefined
 				on pbPath picked o do ask #path o
+				on btnUpdate pressed do ask #refresh undefined
 			)
 
 			rollout rWheels "Car Rig: wheels"
@@ -1000,7 +1006,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.20.0"
+		local toolVersion = "0.21.0"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -1292,9 +1298,15 @@ ca.metre = units.decodeValue "1m"
 					-- Placed on the tyre mesh itself (not the wheel pivot), and centred by its own box so it sits on
 					-- the tyre whichever end of the gizmo its pivot is.
 					c = wheelCentre wheels[i] false
-					cyl = CylGizmo name:(uniqueName (base + "_CarRig_Tyre" + corners[i])) radius:(wheelRadius wheels[i]) height:tw
-					cyl.transform = matrix3 (normalize tm.row1) (cross axle (normalize tm.row1)) axle c
-					cyl.pos += c - (cyl.min + cyl.max) / 2.0
+					if tyreEdits != undefined and tyreEdits[i] != undefined then (
+						cyl = CylGizmo name:(uniqueName (base + "_CarRig_Tyre" + corners[i])) radius:tyreEdits[i][2] height:tyreEdits[i][3]
+						cyl.transform = tyreEdits[i][1] * cw
+					) else (
+						cyl = CylGizmo name:(uniqueName (base + "_CarRig_Tyre" + corners[i])) radius:(wheelRadius wheels[i]) height:tw
+						cyl.transform = matrix3 (normalize tm.row1) (cross axle (normalize tm.row1)) axle c
+						cyl.pos += c - (cyl.min + cyl.max) / 2.0
+					)
+					setUserProp cyl "MaxCarRig_tyre" i
 					cyl.wirecolor = color 120 200 255
 					setUserProp cyl "MaxCarRig_helper" true
 					cyl.parent = suspH
@@ -1310,10 +1322,11 @@ ca.metre = units.decodeValue "1m"
 					s = substituteString suspScript "%RAYFNS%" rayFns
 					s = substituteString s "%GROUNDS%" (listText (for g = 1 to grounds.count collect ("g" + g as string)))
 					s = substituteString s "%REST%" (rest as string)
-					-- The contact is the bottom of the tyre mesh (not the wheel pivot), so a pivot that is off
-					-- the tyre's centre cannot push the tyre into the ground.
-					c = wheelCentre wheels[i] false
-					s = substituteString s "%CONTACT%" (([c.x, c.y, c.z - wheelRadius wheels[i]] * inv) as string)
+					-- The contact is the bottom of the tyre collision shape (its box centre less its radius), so a
+					-- wheel pivot off the tyre's centre cannot push the tyre into the ground, and a hand-fitted
+					-- shape is where the tyre meets the ground.
+					c = (cyl.min + cyl.max) / 2.0
+					s = substituteString s "%CONTACT%" (([c.x, c.y, c.z - cyl.radius] * inv) as string)
 					psc.script = s
 					append later #(suspH, #position, psc)
 					spinH.parent = suspH
@@ -1338,9 +1351,9 @@ ca.metre = units.decodeValue "1m"
 				for n in topLevel bodyNodes do linkTo n bankH
 
 				if mode == 3 do (
-					for w in wheels do (
-						c = wheelCentre w false
-						append offs ([c.x, c.y, c.z - wheelRadius w] * inv)
+					for i = 1 to 4 do (
+						c = (tyreCyls[i].min + tyreCyls[i].max) / 2.0
+						append offs ([c.x, c.y, c.z - tyreCyls[i].radius] * inv)
 					)
 				)
 			)
@@ -2107,6 +2120,7 @@ ca.metre = units.decodeValue "1m"
 		-- Keep speed is on, the Progress keys are stretched to the new spline's length.
 		fn rebuildRig root path grounds = (
 			local ca, saved, keep, cars, oldPath, bottom, wheels, mode, fwdIndex, usePivot, useLayer, newRoot, newCa, c, v
+			local edits = #(undefined, undefined, undefined, undefined), bottomLocal, loc, sc, k
 			global MaxCarRig_grids, MaxCarRig_splines3
 			cars = for n in nodesFrom (rawProp root "MaxCarRig_inCars") where isValidNode n collect n
 			oldPath = (nodesFrom (rawProp root "MaxCarRig_inPath"))[1]
@@ -2129,13 +2143,30 @@ ca.metre = units.decodeValue "1m"
 					append saved #(n, (if c != undefined then copy c else undefined), v)
 				)
 				logLine ("Rebuild " + root.name + ": mode " + mode as string + ", " + cars.count as string + " car parts, path " + path.name + ", grounds " + names grounds)
+				-- Hand-fitted helpers are kept: each tyre shape's place on its wheel and its size (a scaled gizmo
+				-- has the scale folded into Radius and Height), and where BOTTOM sits on the rig.
+				for n in withDescendants #(root) where classOf n == CylGizmo and isValidNode n.parent do (
+					k = getUserProp n "MaxCarRig_tyre"
+					if k == undefined do for j = 1 to 4 where findString n.name (#("_CarRig_TyreFL", "_CarRig_TyreFR", "_CarRig_TyreRL", "_CarRig_TyreRR")[j]) != undefined do k = j
+					if k != undefined do (
+						loc = n.transform * inverse n.parent.transform
+						sc = loc.scale
+						loc = matrix3 (normalize loc.row1) (normalize loc.row2) (normalize loc.row3) loc.row4
+						edits[k] = #(loc, n.radius * (amax sc.x sc.y), n.height * sc.z)
+					)
+				)
+				bottomLocal = bottom.transform * inverse root.transform
 				undo "Refresh car rig" on (
 					try (
 						removeRig root
+						-- BOTTOM goes where it was moved to on the rig (relative to the car's rest place).
+						bottom.transform = bottomLocal * (startFrame bottom fwdIndex)
 						-- Fresh spline and ground lookups.
 						MaxCarRig_grids = undefined
 						MaxCarRig_splines3 = undefined
+						tyreEdits = edits
 						newRoot = buildRig cars path grounds bottom fwdIndex mode spRay.value wheels usePivot spAhead.value spSteer.value spBank.value
+						tyreEdits = undefined
 						newCa = rigParams newRoot
 						for e in saved where e[3] != undefined do (
 							if e[2] != undefined then (try (setPropertyController newCa (e[1] as string) e[2]) catch ())
@@ -2151,6 +2182,7 @@ ca.metre = units.decodeValue "1m"
 					)
 					catch (
 						newRoot = undefined
+						tyreEdits = undefined
 						logLine ("  rebuild failed: " + getCurrentException())
 						messageBox ("Refresh failed:\n" + getCurrentException() + "\n\nLog: " + logPath) title:"Car Rig"
 					)
@@ -2181,6 +2213,8 @@ ca.metre = units.decodeValue "1m"
 		fn doChange r action arg = (
 			local grounds, path, carAll, surfs, added = #()
 			if not isValidNode r then messageBox "Select a rig first (the ..._CarRig rectangle)." title:"Car Rig"
+			else if action == #refresh and rawProp r "MaxCarRig_inCars" != undefined then
+				changeRig r (nodesFrom (rawProp r "MaxCarRig_inPath"))[1] (rigGrounds r)
 			else if rawProp r "MaxCarRig_inCars" == undefined then messageBox "This rig was built with an older version. Remove it and build it once more; after that it can be changed." title:"Car Rig"
 			else if action != #path and getUserProp r "MaxCarRig_inMode" == 1 then messageBox "This rig is in Simple mode, which does not use ground." title:"Car Rig"
 			else (
