@@ -12,7 +12,7 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.24.0" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.24.1" width:540
 	(
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		-- Tyre collision shapes as the user left them (place, Radius, Height per wheel), handed from a rebuild
@@ -1159,7 +1159,7 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.24.0"
+		local toolVersion = "0.24.1"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -1886,20 +1886,31 @@ ca.metre = units.decodeValue "1m"
 
 		on btnGuide pressed do messageBox ( \
 			"1. Name your parts:\n" + \
-			"    BODY = the car body (a group is fine)\n" + \
-			"    FRONT_LEFT, FRONT_RIGHT, BACK_LEFT, BACK_RIGHT = the wheels\n" + \
+			"    BODY = the car body. The whole car can be one group, with the wheel groups inside it.\n" + \
+			"    FRONT_LEFT, FRONT_RIGHT, BACK_LEFT, BACK_RIGHT = the wheels (groups are fine)\n" + \
 			"    CAR PATH = the spline to drive along\n" + \
-			"    CAR SURFACE = the road or ground\n\n" + \
+			"    CAR SURFACE = the road or ground (CAR SURFACE001, CAR SURFACE Kerb... all count)\n\n" + \
 			"2. Put each wheel's pivot in its centre:\n" + \
 			"    Hierarchy > Affect Pivot Only > Center to Object.\n\n" + \
-			"3. Press Auto detect by name. Check what it found.\n\n" + \
-			"4. Pick a mode. Per wheel follows bumps best.\n\n" + \
-			"5. Press Build rig.\n\n" + \
-			"6. Select the rig rectangle. The Car Rig modifier sets\n" + \
-			"    Progress, steering, Bank, Tyre spin, Suspension and Realistic body motion.\n\n" + \
-			"7. For smooth playback, press Bake a copy of the selected rig.\n" + \
+			"3. Press Auto detect by name, or select the car and press Use selection as car\n" + \
+			"    (wheels inside a grouped car are found by name). Check what it found.\n\n" + \
+			"4. Pick a mode. Per wheel follows kerbs and bumps best. Create at car bottom makes BOTTOM.\n\n" + \
+			"5. Press Build rig. No spline or ground yet? It still builds: a straight 30 m\n" + \
+			"    spline is made and the car rides on it. Set the real ones later on the rig.\n\n" + \
+			"6. Select the rig rectangle. Its Car Rig modifier has the settings:\n" + \
+			"    drive and speed: Progress, Path smoothing %, Set run from speed\n" + \
+			"    ground and spline: add or remove ground, Pick new spline, Show helpers\n" + \
+			"    wheels: Suspension, Collision detail, Lift smoothing\n" + \
+			"    corner slowdown: Slow on corners, Slow for kerbs and bumps\n" + \
+			"    camera: Add camera, Stabiliser, Keep horizon level\n\n" + \
+			"7. Fit the wheels: each tyre has a light-blue outline (..._CarRig_Tyre..). Move or\n" + \
+			"    resize it to hug the tyre, move BOTTOM if the car sits too high or low, then\n" + \
+			"    press Update rig from helpers (ground and spline panel).\n\n" + \
+			"8. Cameras: Add camera puts one behind the car. Move it anywhere; it rides with the car.\n\n" + \
+			"9. For smooth playback, press Bake a copy of the selected rig.\n" + \
 			"    The copy gets its own layer and the rig is hidden. Esc cancels.\n\n" + \
-			"8. To take the rig off, select it and press Remove selected rig.\n\n" + \
+			"10. To take the rig off, select it and press Remove selected rig. The car goes back\n" + \
+			"    to where it was before the rig; cameras stay.\n\n" + \
 			"Something wrong? Press Open log and send the log.") title:("V1 Simple Car Rig " + toolVersion + " - Setup guide")
 
 		on btnAuto pressed do (
