@@ -4,6 +4,17 @@
 -- Front wheels steer towards an aim null further along the spline, and the body banks.
 -- Run this file once (Scripting > Run Script, or drop it on a viewport). It opens the
 -- tool and adds the "SCR" action under category "V1_Scripts" for toolbars and hotkeys.
+--
+-- How this file is laid out (search for "PART" to jump between them):
+--   PART 1  Tool state: what the dialog has picked so far.
+--   PART 2  Rig scripts: controller code kept as text and written into the scene at build time, so a
+--           rigged scene plays on a PC without this tool. %NAME% markers are filled in by buildRig.
+--   PART 3  The "Car Rig" modifier: the animatable settings and their panels on the rig root.
+--   PART 4  Small helpers: logging, bounding boxes, finding wheels, tyres and groups.
+--   PART 5  Building and removing a rig (buildRig, removeRig, layers).
+--   PART 6  The dialog's controls.
+--   PART 7  Rig records and watchers: what each rig was built from, Keep speed, spline and ground edits.
+--   PART 8  Button handlers, plus Refresh, cameras and changing a built rig.
 
 macroScript V1_SimpleCarRig
 category:"V1_Scripts"
@@ -12,8 +23,9 @@ buttonText:"SCR"
 (
 	global MaxCarRig_UI
 
-	rollout MaxCarRig_UI "V1 Simple Car Rig 0.25.0" width:540
+	rollout MaxCarRig_UI "V1 Simple Car Rig 0.25.1" width:540
 	(
+		-- PART 1. Tool state: what the dialog has picked so far.
 		local carNodes = #(), groundList = #(), wheelNodes = #(undefined, undefined, undefined, undefined)
 		-- Tyre collision shapes as the user left them (place, Radius, Height per wheel), handed from a rebuild
 		-- to buildRig so hand-fitted shapes survive Refresh / Update.
@@ -27,8 +39,9 @@ buttonText:"SCR"
 		-- RadioButtons cannot read their labels back, so the log uses these.
 		local modeNames = #("Simple", "Body", "Per wheel"), groundNames = #("Include list", "Exclude list")
 
-		-- The controller scripts below live in the scene file, so a rigged scene keeps
-		-- working on a PC without this tool.
+		-- PART 2. Rig scripts. The controller scripts below live in the scene file, so a rigged scene keeps
+		-- working on a PC without this tool. Inside them, F is the frame, sp the spline and rigCA the
+		-- Car Rig modifier's settings.
 
 		-- Spline lookup functions shared by the rig scripts (pasted in when the tool opens).
 		local splineFns = @"-- Spline lookups from a table: the spline is sampled once into points with running lengths and kept in
@@ -39,13 +52,16 @@ buttonText:"SCR"
 	-- Path smoothing: each rig script sets this from its rig before any spline lookup (scripts run one at a
 	-- time), so every part of the rig drives the same smoothed path.
 	global MaxCarRig_sm
+	-- How far either way path smoothing averages the spline, in scene units (15 m at 100%).
 	fn smoothOf ca = try (ca.pathSmooth / 100.0 * 15.0 * ca.metre) catch (0.0)
+	-- A fingerprint of the spline's shape (sum of knots and handles), to spot edits cheaply.
 	fn splinePrint sp =
 	(
 		local fp = [0,0,0], i
 		try (for i = 1 to numKnots sp 1 do fp += (getKnotPoint sp 1 i) + 0.5 * (getInVec sp 1 i) + 0.25 * (getOutVec sp 1 i)) catch ()
 		fp
 	)
+	-- Returns the sampled spline: #(points, running lengths, total length, directions, turn so far).
 	fn splineTable sp =
 	(
 		local tab, key1, key2, e, pts, lens, tans, ns, i, j, total, steps = 24, fp, turns, a, b, sm, raw, rl, w, ws, acc, h
@@ -165,11 +181,13 @@ buttonText:"SCR"
 	-- (the same sideways grip). If the car is already slow enough for a bend it keeps its speed.
 	-- The plan (distance travelled at each frame) is built once per setting and kept in a global.
 	global MaxCarRig_plans
+	-- The Progress setting at frame f, as 0..1.
 	fn progAt ca f =
 	(
 		local c = try (getPropertyController ca #progress) catch (undefined)
 		if c == undefined then ca.progress / 100.0 else (at time (f as time) c.value) / 100.0
 	)
+	-- Returns the corner speed plan for this spline and these settings, built on first use.
 	fn planTable sp ca =
 	(
 		local tab, c, key, e, plan, i, n, pts, lens, tans, kap, cap, a, b, d, len, t0, t1, f, s, v, vCruise
@@ -291,6 +309,7 @@ buttonText:"SCR"
 			q
 		)
 	)
+	-- Point and direction at share f (0..1) along the spline's length.
 	fn splineAt sp f =
 	(
 		local tab, pts, lens, target, lo, hi, mid, a
@@ -331,6 +350,7 @@ buttonText:"SCR"
 	-- in a global; plain intersectRay tests every face on every frame and makes playback lag.
 	-- A grid is rebuilt when its object moves or its face count changes.
 	global MaxCarRig_grids
+	-- The ray grid for ground object g, built on first use.
 	fn gridFor g =
 	(
 		local rm, key, i
@@ -355,6 +375,7 @@ buttonText:"SCR"
 		)
 		rm
 	)
+	-- The highest ground hit straight below point p (rays start rayUp above it), or undefined.
 	fn castDown grounds p rayUp =
 	(
 		local best = undefined, o, rm, n, i, d, tries, lift
@@ -770,9 +791,8 @@ buttonText:"SCR"
 	((%AXIS% (%SIGN% * spin * dist / %RADIUS% * 180.0 / pi)) * %BASE%) as quat
 )"
 
-		-- The controls on the rig's "Car Rig" modifier. All are animatable.
-		-- The Car Rig modifier. Each parameter block has its own panel in the command panel, so the settings sit
-		-- in short folding panels instead of one long column. Scripts read values as rigCA.<name>; the tool
+		-- PART 3. The Car Rig modifier. All its controls are animatable.
+		-- Each parameter block has its own panel in the command panel, so the settings sit in short folding panels instead of one long column. Scripts read values as rigCA.<name>; the tool
 		-- reaches animated values with getPropertyController, which works whichever block they are in.
 		fn paramsCA = attributes MaxCarRigParams attribID:#(0x5a1c3e01, 0x2b7d4fa2)
 		(
@@ -1184,7 +1204,9 @@ buttonText:"SCR"
 			)
 		)
 
-		local toolVersion = "0.25.0"
+		-- PART 4. Small helpers used by the tool (not by the rig scripts).
+
+		local toolVersion = "0.25.1"
 		-- The V1 header is drawn in Max's own UI colours so it reads in any theme. V1's typeface
 		-- (ABC Arizona) is not free to ship, so it uses Georgia, a serif on every Windows PC.
 		fn uiColour key = (
@@ -1192,9 +1214,11 @@ buttonText:"SCR"
 			(dotNetClass "System.Drawing.Color").FromArgb (p.x as integer) (p.y as integer) (p.z as integer)
 		)
 
+		-- Pick button filters: splines only, meshes only.
 		fn shapeFilt o = superClassOf o == Shape
 		fn geoFilt o = superClassOf o == GeometryClass
 
+		-- Log helpers: everything the tool does is written to logPath (Show log button).
 		fn listText items = (
 			local s = ""
 			for i = 1 to items.count do s += (if i > 1 then ", " else "") + (items[i] as string)
@@ -1212,6 +1236,7 @@ buttonText:"SCR"
 				close f
 			)
 		)
+		-- Bounding box, top-level parts and all children of a set of nodes.
 		fn names nodes = (
 			local s = listText (for n in nodes collect (if isValidNode n then n.name else "-"))
 			"(" + nodes.count as string + ") " + s
@@ -1238,6 +1263,7 @@ buttonText:"SCR"
 			all
 		)
 
+		-- A yellow BOTTOM helper under the middle of the car, on its lowest point.
 		fn makeBottom cars = (
 			local bb = bboxOf cars
 			local c = (bb[1] + bb[2]) / 2
@@ -1254,6 +1280,7 @@ buttonText:"SCR"
 			matrix3 x (cross z x) z bottom.pos
 		)
 
+		-- Brake discs and calipers are skipped when looking for the tyre.
 		fn isBrake n = matchPattern n.name pattern:"*brake*" or matchPattern n.name pattern:"*calip*" or matchPattern n.name pattern:"*callip*"
 		-- The tyre is the tallest mesh in a wheel group, so its box gives the true axle centre and radius.
 		-- Picking by height (not overall size) and skipping brakes matters: one brake mesh can span
@@ -1266,6 +1293,7 @@ buttonText:"SCR"
 			)
 			best
 		)
+		-- Wheel centre, radius and half-width, from the pivot or the tyre's box.
 		fn wheelCentre w usePivot = if usePivot then w.pos else (local t = tyreOf w; (t.min + t.max) / 2)
 		fn wheelRadius w = (local t = tyreOf w; (t.max.z - t.min.z) / 2)
 		-- Half the tyre's width, measured across the car (side is the car's left).
@@ -1308,6 +1336,9 @@ buttonText:"SCR"
 			#(us, hts)
 		)
 
+		-- PART 5. Building and removing a rig.
+
+		-- Parents a car part to a rig helper, first saving its old parent, place and group so Remove can restore them.
 		fn linkTo n parent = (
 			setUserProp n "MaxCarRig_oldParent" (if n.parent == undefined then 0 else n.parent.handle)
 			setUserProp n "MaxCarRig_oldTM" (n.transform as string)
@@ -1327,6 +1358,7 @@ buttonText:"SCR"
 			o
 		)
 
+		-- Wires the spline and the steering settings into a steering script controller.
 		fn addSteerInputs ctrl path ca = (
 			ctrl.AddNode "sp" path
 			ctrl.AddTarget "progress" (getPropertyController ca "progress")
@@ -1335,6 +1367,7 @@ buttonText:"SCR"
 			ctrl.AddObject "rigCA" ca
 		)
 
+		-- A Point helper tagged as part of the rig, so Remove deletes it.
 		fn rigHelper nm tm sz col isBox = (
 			local h = Point name:(uniqueName nm) transform:tm size:sz box:isBox cross:(not isBox) \
 				axisTripod:false centerMarker:false wirecolor:col
@@ -1588,6 +1621,7 @@ ca.metre = units.decodeValue "1m"
 			)
 		)
 
+		-- Deletes a rig and puts the car back as it was: old parents, places, groups and layers.
 		fn removeRig root = (
 			local all, h, extras, oldLayer, lay, rigLayerName, moved, depths, d, p, i
 			all = withDescendants #(root)
@@ -1628,6 +1662,7 @@ ca.metre = units.decodeValue "1m"
 			LayerManager.deleteLayerByName rigLayerName
 		)
 
+		-- PART 6. The dialog's controls.
 		dotNetControl lblBrand "System.Windows.Forms.Label" width:514 height:20
 		dotNetControl lblTitle "System.Windows.Forms.Label" width:514 height:30 offset:[0,-5]
 		button btnGuide "Setup guide" width:514
@@ -1701,6 +1736,8 @@ ca.metre = units.decodeValue "1m"
 			label lblA2 "not liable for any loss or damage from using it. Back up your work." align:#left
 		)
 
+		-- PART 7. Rig records and watchers.
+
 		-- Build stores what each rig was built from on the rig itself, so Refresh can rebuild it the same way.
 		-- Handles are written as "n12_15_0" (a leading letter keeps getUserProp from reading it as a number).
 		fn handlesText nodes = (
@@ -1721,6 +1758,7 @@ ca.metre = units.decodeValue "1m"
 			)
 			hit
 		)
+		-- Writes what the rig was built from onto the rig root (read back by Refresh and Change).
 		fn saveBuildInfo root cars path grounds bottom fwdIndex mode wheels usePivot useLayer = (
 			setUserProp root "MaxCarRig_inCars" (handlesText cars)
 			setUserProp root "MaxCarRig_inPath" (handlesText #(path))
@@ -1732,6 +1770,7 @@ ca.metre = units.decodeValue "1m"
 			setUserProp root "MaxCarRig_inPivot" usePivot
 			setUserProp root "MaxCarRig_inLayer" useLayer
 		)
+		-- The Car Rig modifier's settings on a rig root.
 		fn rigParams root = (
 			local m = (for x in root.modifiers where classOf x == EmptyModifier collect x)[1]
 			if m == undefined then undefined else custAttributes.get m 1
@@ -1830,12 +1869,14 @@ ca.metre = units.decodeValue "1m"
 				when geometry grounds changes id:#MaxCarRigWatch handleAt:#redrawViews g do MaxCarRig_onGround g
 		)
 
+		-- Greys out the ground and wheel controls in Simple mode.
 		fn refreshUI = (
 			local full = rbMode.state > 1
 			for c in #(rbGround, lbGround, btnGroundAdd, btnGroundDel, btnGroundClear, spRay, ddCentre, \
 				pbFL, pbFR, pbRL, pbRR, spAhead, spSteer, spBank) do c.enabled = full
 			lbGround.items = for g in groundList where isValidNode g collect g.name
 		)
+		-- Fills the Change a built rig group from the rig it is following.
 		fn showEditRig = (
 			global MaxCarRig_editRoot
 			local r = MaxCarRig_editRoot
@@ -1848,12 +1889,15 @@ ca.metre = units.decodeValue "1m"
 				lbEditGround.items = #()
 			)
 		)
+		-- Selection callback: the Change group follows the last rig selected.
 		fn onSelChanged = (
 			global MaxCarRig_editRoot
 			local r = (for o in selection where getUserProp o "MaxCarRig" == true collect o)[1]
 			if r != undefined do MaxCarRig_editRoot = r
 			showEditRig()
 		)
+
+		-- PART 8. Button handlers. Long jobs (Build, Refresh, Change) are further down.
 
 		on MaxCarRig_UI open do (
 			local fontStyle = dotNetClass "System.Drawing.FontStyle"
